@@ -76,7 +76,7 @@ impl fmt::Display for PrettyBoard {
         let at = |i : usize| Position(board[i as usize]);
         let mut row = |from : usize| {
             let mut r = Ok(());
-            for i in 0..3 {
+            for i in 0..4 {
                 r = if row_number(from as u8) % 2 == 0 {
                     r.and(black(at(from + 2*i), f)).and(white(at(from + 2*i + 1), f))
                 } else {
@@ -108,7 +108,7 @@ fn play() -> String {
         Player::Black => Player::White
     };
 
-    let max_rounds = 8;
+    let max_rounds = 20;
     let mut i = 0;
     loop {
         turn = next(turn);
@@ -133,7 +133,7 @@ fn checkmate(_: &Board) -> Option<Player> {
 fn make_move(player: Player, board: &Board) -> Option<Board> {
     let mut best_board = None;
     let mut best_rating = 0;
-    for candidate in moves(player, &board) {
+    for candidate in player_moves(player, &board) {
         let rating = rate(&candidate);
         let better = match player {
             Player::White => rating > best_rating,
@@ -147,22 +147,50 @@ fn make_move(player: Player, board: &Board) -> Option<Board> {
     return best_board;
 }
 
-struct Moves<'a> {
-    board: &'a Board,
-    player: Player,
-    piece: u8,
-    move_: u64,
+// All possible moves for a Player
+fn player_moves(player: Player, board: &Board) -> Vec<Board> {
+    let mut results = Vec::new();
+    for (pos, piece) in board.iter().enumerate() {
+        match *piece {
+            None => {},
+            Some(Piece(p,c)) => if p == player {
+                piece_moves(Piece(p,c), pos as u8, &board, &mut results);
+            }
+        }
+    }
+    results
 }
 
-// All possible moves for a Player
-fn moves(_player: Player, board: &Board) -> Vec<Board> {
-    let mut v = Vec::new();
-    v.push(board.clone());
-    v
+
+fn at(i : u8, board : &Board) -> Option<Piece> {
+    board[i as usize]
+}
+
+fn piece_moves(piece: Piece, pos: u8, board : &Board, results : &mut Vec<Board>) -> () {
+    let Piece(p,c) = piece;
+    if let Character::Pawn = c {
+        // move forward
+        match p {
+            Player::Black => prev_row(pos),
+            Player::White => next_row(pos)
+        }.filter(|pos_| {
+            let occupied = at(*pos_, board).is_some();
+            !occupied
+        }).map(|new_pos| {
+            results.push(board.clone());
+            results
+                .last_mut()
+                .map(|board| {
+                    board[pos as usize] = None;
+                    board[new_pos as usize] = Some(piece);
+                });
+
+        });
+    }
 }
 
 // The rating represents how good the game looks for the white player.
-type Rating = u64;
+type Rating = i64;
 
 fn rate(board: &Board) -> Rating {
     let mut w_attack: [bool; 64] = [false; 64];
@@ -228,8 +256,8 @@ fn rate(board: &Board) -> Rating {
             }
         }
     }
-    let white_vulnerable = w_threatened - w_defended;
-    let black_vulnerable = b_threatened - b_defended;
+    let white_vulnerable :i64 = w_threatened - w_defended;
+    let black_vulnerable :i64 = b_threatened - b_defended;
     return black_vulnerable - white_vulnerable;
 }
 
