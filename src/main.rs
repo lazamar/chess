@@ -22,7 +22,7 @@ struct CliOptions {
 
 fn main() -> () {
     let cli = CliOptions::parse();
-    let delay = if cli.slow { Some(500) } else { None };
+    let delay = if cli.slow { Some(600) } else { None };
     println!("{}", play(delay, cli.print, cli.rounds));
 }
 
@@ -413,23 +413,31 @@ fn rate(board: &Board) -> Rating {
     let mut w_defended = 0;
     let mut b_threatened = 0;
     let mut b_defended = 0;
+    let weight = |c| match c {
+        Character::Pawn => 1,
+        Character::Hook => 2,
+        Character::Knight => 2,
+        Character::Bishop => 2,
+        Character::Queen => 10,
+        Character::King => 100
+    };
     for (pos, piece) in board.iter().enumerate() {
-        match piece {
+        match *piece {
             None => {}
-            Some(Piece(Player::White, _)) => {
+            Some(Piece(Player::White, c)) => {
                 if b_attack[pos] {
-                    w_threatened += 1;
+                    w_threatened += weight(c);
                 }
                 if w_attack[pos] {
-                    w_defended += 1;
+                    w_defended += weight(c);
                 }
             }
-            Some(Piece(Player::Black, _)) => {
+            Some(Piece(Player::Black, c)) => {
                 if b_attack[pos] {
-                    b_defended += 1;
+                    b_defended += weight(c);
                 }
                 if w_attack[pos] {
-                    b_threatened += 1;
+                    b_threatened += weight(c);
                 }
             }
         }
