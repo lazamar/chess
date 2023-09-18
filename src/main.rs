@@ -28,7 +28,7 @@ struct CliOptions {
 
 fn main() -> () {
     let cli = CliOptions::parse();
-    let delay = if cli.slow { Some(300) } else { None };
+    let delay = if cli.slow { Some(500) } else { None };
 
     if cli.interactive {
         println!("{}", interactive());
@@ -299,12 +299,14 @@ fn checkmate(board: &Board) -> Option<Player> {
 fn make_move(player: Player, board: &Board, history : &BTreeSet<Board>) -> Option<Board> {
     let mut best_board = None;
     let mut best_rating = 0;
+    let mut all_ratings = Vec::new();
     for candidate in player_moves(player, &board) {
         if history.contains(&candidate) { continue }
         if checkmate(&candidate).is_some() {
             return Some(candidate);
         }
-        let rating = rate(&candidate);
+        let rating = rate(player, &candidate);
+        all_ratings .push(rating);
         let better = match player {
             Player::White => rating > best_rating,
             Player::Black => rating < best_rating,
@@ -314,6 +316,9 @@ fn make_move(player: Player, board: &Board, history : &BTreeSet<Board>) -> Optio
             best_rating = rating;
         }
     }
+
+    println!("All ratings :{all_ratings:?}");
+    println!("Rating of :{}", best_rating);
     return best_board;
 }
 
@@ -516,9 +521,9 @@ fn knight_moves(pos: usize) -> Vec<u8> {
 // The rating represents how good the game looks for the white player.
 type Rating = i64;
 
-fn rate(board: &Board) -> Rating {
-    let mut w_attack: [bool; 64] = [false; 64];
-    let mut b_attack: [bool; 64] = [false; 64];
+fn rate(turn: Player, board: &Board) -> Rating {
+    let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
+    let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
 
     let mut attack = |player: Player, pos: u8| {
         match player {
@@ -542,13 +547,13 @@ fn rate(board: &Board) -> Rating {
                 Some(p) => p,
             };
             if other != player {
-                attack(other, *target);
+                attack(player, *target);
             }
         }
     }
 
-    let mut w_threatened = 0;
-    let mut w_defended = 0;
+    let mut w_threatened = 0; // white pieces threatened
+    let mut w_defended = 0;   // white pieces defended (threatened by a white piece)
     let mut b_threatened = 0;
     let mut b_defended = 0;
     let weight = |c| match c {
@@ -562,20 +567,32 @@ fn rate(board: &Board) -> Rating {
     for (pos, piece) in board.iter().enumerate() {
         match *piece {
             None => {}
+            Some(Piece(Player::White, Character::King)) => {
+                if b_attack[pos] {
+                    let multiplier = if turn == Player::White { 2 } else { 1 };
+                    w_threatened += multiplier * weight(Character::King);
+                }
+            },
             Some(Piece(Player::White, c)) => {
                 if b_attack[pos] {
                     w_threatened += weight(c);
                 }
-                if w_attack[pos] && Character::King != c {
+                if w_attack[pos] {
                     w_defended += weight(c);
                 }
             }
-            Some(Piece(Player::Black, c)) => {
-                if b_attack[pos] {
-                    b_defended += weight(c);
+            Some(Piece(Player::Black, Character::King)) => {
+                if w_attack[pos] {
+                    let multiplier = if turn == Player::Black { 2 } else { 1 };
+                    b_threatened += multiplier * weight(Character::King);
                 }
+            },
+            Some(Piece(Player::Black, c)) => {
                 if w_attack[pos] {
                     b_threatened += weight(c);
+                }
+                if b_attack[pos] {
+                    b_defended += weight(c);
                 }
             }
         }
