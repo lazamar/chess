@@ -1,9 +1,29 @@
+use clap::Parser;
 use core::fmt::Debug;
 use std::fmt;
 use std::{thread, time::Duration};
 
+/// Play a game of chess
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct CliOptions {
+    /// Run the game slowly so that a human can follow
+    #[arg(long)]
+    slow : bool,
+
+    /// Print the board at each round
+    #[arg(long)]
+    print : bool,
+
+    /// Print the board at each round
+    #[arg(long, value_name = "N", default_value_t = 100)]
+    rounds : usize,
+}
+
 fn main() -> () {
-    println!("{}", play());
+    let cli = CliOptions::parse();
+    let delay = if cli.slow { Some(500) } else { None };
+    println!("{}", play(delay, cli.print, cli.rounds));
 }
 
 // -----------------
@@ -105,7 +125,7 @@ impl fmt::Display for PrettyBoard {
 // Playing
 // -----------------
 
-fn play() -> String {
+fn play(delay : Option<u64>, print : bool, max_rounds: usize) -> String {
     let mut board = starting_board();
     let mut turn = Player::White;
     let next = |p| match p {
@@ -113,22 +133,26 @@ fn play() -> String {
         Player::Black => Player::White,
     };
 
-    let max_rounds = 100;
     let mut i = 0;
     loop {
         match make_move(turn, &board) {
             None => return "Draw!".to_string(),
             Some(b) => board = b,
         }
-        println!("{turn:?} played");
-        println!("{}\n\n", PrettyBoard(board));
+        if print {
+            println!("{turn:?} played");
+            println!("{}\n\n", PrettyBoard(board));
+        }
         i += 1;
-        thread::sleep(Duration::from_millis(5_00));
+        match delay {
+            None => {},
+            Some(millis) => thread::sleep(Duration::from_millis(millis))
+        };
         match checkmate(&board) {
             None => {}
             Some(player) => return format!("The winner is: {player:?}"),
         }
-        if i > max_rounds {
+        if i >= max_rounds {
             return "Reached max iterations".to_string();
         }
         turn = next(turn);
