@@ -1,5 +1,6 @@
 use core::fmt::Debug;
 use std::fmt;
+use std::{thread, time::Duration};
 
 fn main() -> () {
     println!("{}", play());
@@ -40,7 +41,7 @@ impl fmt::Display for Character {
             Character::Knight => "♘",
             Character::Bishop => "♗",
             Character::Queen => "♕",
-            Character::King => "♔"
+            Character::King => "♔",
         };
         write!(f, "{}", char)
     }
@@ -48,10 +49,10 @@ impl fmt::Display for Character {
 
 impl fmt::Display for Piece {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Piece(player,char) = self;
+        let Piece(player, char) = self;
         match player {
             Player::White => write!(f, "\x1b[32m{char}"),
-            Player::Black => write!(f, "\x1b[31m{char}")
+            Player::Black => write!(f, "\x1b[31m{char}"),
         }
     }
 }
@@ -63,7 +64,7 @@ impl fmt::Display for Position {
         let Position(o) = self;
         match o {
             Some(piece) => write!(f, " {piece} "),
-            None => write!(f, "   ")
+            None => write!(f, "   "),
         }
     }
 }
@@ -71,16 +72,18 @@ impl fmt::Display for Position {
 impl fmt::Display for PrettyBoard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let PrettyBoard(board) = self;
-        let black = |p : Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[40m{p}\x1b[0m");
-        let white = |p : Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[107m{p}\x1b[0m");
-        let at = |i : usize| Position(board[i as usize]);
-        let mut row = |from : usize| {
+        let black = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[40m{p}\x1b[0m");
+        let white = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[107m{p}\x1b[0m");
+        let at = |i: usize| Position(board[i as usize]);
+        let mut row = |from: usize| {
             let mut r = Ok(());
             for i in 0..4 {
                 r = if row_number(from as u8) % 2 == 0 {
-                    r.and(black(at(from + 2*i), f)).and(white(at(from + 2*i + 1), f))
+                    r.and(black(at(from + 2 * i), f))
+                        .and(white(at(from + 2 * i + 1), f))
                 } else {
-                    r.and(white(at(from + 2*i), f)).and(black(at(from + 2*i + 1), f))
+                    r.and(white(at(from + 2 * i), f))
+                        .and(black(at(from + 2 * i + 1), f))
                 }
             }
             r.and(write!(f, "\n"))
@@ -105,10 +108,10 @@ fn play() -> String {
     let mut turn = Player::White;
     let next = |p| match p {
         Player::White => Player::Black,
-        Player::Black => Player::White
+        Player::Black => Player::White,
     };
 
-    let max_rounds = 20;
+    let max_rounds = 100;
     let mut i = 0;
     loop {
         turn = next(turn);
@@ -116,24 +119,42 @@ fn play() -> String {
             None => return "Draw!".to_string(),
             Some(b) => match checkmate(&b) {
                 None => board = b,
-                Some(player) => return format!("The origin is: {player:?}")
-            }
+                Some(player) => return format!("The winner is: {player:?}"),
+            },
         }
         println!("{}", PrettyBoard(board));
         i += 1;
-        if i > max_rounds { return "Reached max iterations".to_string(); }
+        thread::sleep(Duration::from_millis(0));
+        if i > max_rounds {
+            return "Reached max iterations".to_string();
+        }
     }
 }
 
-//TODO
-fn checkmate(_: &Board) -> Option<Player> {
-    return None
+fn checkmate(board: &Board) -> Option<Player> {
+    let mut kings = Vec::new();
+    for piece in board.iter() {
+        match piece {
+            Some(Piece(player, Character::King)) => kings.push(player),
+            _ => {}
+        }
+    }
+    if let None = kings.iter().find(|&&p| *p == Player::White) {
+        return Some(Player::Black);
+    }
+    if let None = kings.iter().find(|&&p| *p == Player::Black) {
+        return Some(Player::White);
+    }
+    return None;
 }
 
 fn make_move(player: Player, board: &Board) -> Option<Board> {
     let mut best_board = None;
     let mut best_rating = 0;
     for candidate in player_moves(player, &board) {
+        if checkmate(&candidate).is_some() {
+            return Some(candidate);
+        }
         let rating = rate(&candidate);
         let better = match player {
             Player::White => rating > best_rating,
@@ -152,39 +173,81 @@ fn player_moves(player: Player, board: &Board) -> Vec<Board> {
     let mut results = Vec::new();
     for (pos, piece) in board.iter().enumerate() {
         match *piece {
-            None => {},
-            Some(Piece(p,c)) => if p == player {
-                piece_moves(Piece(p,c), pos as u8, &board, &mut results);
+            None => {}
+            Some(Piece(p, c)) => {
+                if p == player {
+                    piece_moves(Piece(p, c), pos, &board, &mut results);
+                }
             }
         }
     }
     results
 }
 
-
-fn at(i : u8, board : &Board) -> Option<Piece> {
+fn at(i: u8, board: &Board) -> Option<Piece> {
     board[i as usize]
 }
 
-fn piece_moves(piece: Piece, pos: u8, board : &Board, results : &mut Vec<Board>) -> () {
-    let Piece(p,c) = piece;
-    if let Character::Pawn = c {
-        // move forward
-        match p {
-            Player::Black => prev_row(pos),
-            Player::White => next_row(pos)
-        }.filter(|pos_| {
-            let occupied = at(*pos_, board).is_some();
-            !occupied
-        }).map(|new_pos| {
-            results.push(board.clone());
-            results
-                .last_mut()
-                .map(|board| {
-                    board[pos as usize] = None;
-                    board[new_pos as usize] = Some(piece);
-                });
+fn piece_moves(piece: Piece, pos: usize, board: &Board, results: &mut Vec<Board>) -> () {
+    let Piece(p, c) = piece;
+    match c {
+        Character::Pawn => move_pawn(p, pos, board, results, move |p_: Player| p_ != p),
+        _ => {}
+    }
+}
+// ----------------------------------------------------------------------
+// Piece moves
+// ----------------------------------------------------------------------
 
+fn move_pawn(
+    player: Player,
+    pos: usize,
+    board: &Board,
+    results: &mut Vec<Board>,
+    accept: impl Fn(Player) -> bool,
+) -> () {
+    let piece = Piece(player, Character::Pawn);
+
+    // move forward
+    match player {
+        Player::Black => prev_row(pos as u8),
+        Player::White => next_row(pos as u8),
+    }
+    .filter(|pos_| {
+        let occupied = at(*pos_, board).is_some();
+        !occupied
+    })
+    .map(|new_pos| {
+        results.push(board.clone());
+        results.last_mut().map(|board| {
+            board[pos] = None;
+            board[new_pos as usize] = Some(piece);
+        });
+    });
+
+    // take piece
+    let positions = match player {
+        Player::Black => prev_row(pos as u8),
+        Player::White => next_row(pos as u8),
+    }
+    .map_or(Vec::new(), |pos_| [next_col(pos_), prev_col(pos_)].to_vec());
+    for pp in positions.iter() {
+        let new_pos = match pp {
+            Some(new_pos) => new_pos,
+            None => continue
+        };
+        match at(*new_pos, board) {
+            Some(Piece(p,_)) => {
+                if !accept(p) {
+                    continue
+                }
+            }
+            None => continue
+        }
+        results.push(board.clone());
+        results.last_mut().map(|board| {
+            board[pos] = None;
+            board[*new_pos as usize] = Some(piece);
         });
     }
 }
@@ -256,8 +319,8 @@ fn rate(board: &Board) -> Rating {
             }
         }
     }
-    let white_vulnerable :i64 = w_threatened - w_defended;
-    let black_vulnerable :i64 = b_threatened - b_defended;
+    let white_vulnerable: i64 = w_threatened - w_defended;
+    let black_vulnerable: i64 = b_threatened - b_defended;
     return black_vulnerable - white_vulnerable;
 }
 
