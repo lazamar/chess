@@ -3,6 +3,7 @@ use core::fmt::Debug;
 use std::fmt;
 use std::io;
 use std::{thread, time::Duration};
+use std::collections::BTreeSet;
 
 /// Play a game of chess
 #[derive(Parser, Debug)]
@@ -27,7 +28,7 @@ struct CliOptions {
 
 fn main() -> () {
     let cli = CliOptions::parse();
-    let delay = if cli.slow { Some(600) } else { None };
+    let delay = if cli.slow { Some(300) } else { None };
 
     if cli.interactive {
         println!("{}", interactive());
@@ -40,7 +41,7 @@ fn main() -> () {
 // Types
 // -----------------
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, PartialOrd, Eq, Ord)]
 enum Character {
     Hook,
     Knight,
@@ -50,13 +51,13 @@ enum Character {
     Pawn,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, PartialOrd, Eq, Ord)]
 enum Player {
     Black,
     White,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, PartialOrd, Eq, Ord)]
 struct Piece(Player, Character);
 
 type Board = [Option<Piece>; 64];
@@ -152,7 +153,7 @@ fn interactive() -> String {
         }
 
         thread::sleep(Duration::from_millis(800));
-        match make_move(Player::Black, &board) {
+        match make_move(Player::Black, &board, &BTreeSet::new()) {
             None => return "Draw!".to_string(),
             Some(b) => board = b,
         }
@@ -243,6 +244,7 @@ fn read_pos() -> u8 {
 }
 
 fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
+    let mut history = BTreeSet::new();
     let mut board = starting_board();
     let mut turn = Player::White;
     let next = |p| match p {
@@ -252,7 +254,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
 
     let mut i = 0;
     loop {
-        match make_move(turn, &board) {
+        match make_move(turn, &board, &history) {
             None => return "Draw!".to_string(),
             Some(b) => board = b,
         }
@@ -272,6 +274,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
         if i >= max_rounds {
             return "Reached max iterations".to_string();
         }
+        history.insert(board);
         turn = next(turn);
     }
 }
@@ -293,10 +296,11 @@ fn checkmate(board: &Board) -> Option<Player> {
     return None;
 }
 
-fn make_move(player: Player, board: &Board) -> Option<Board> {
+fn make_move(player: Player, board: &Board, history : &BTreeSet<Board>) -> Option<Board> {
     let mut best_board = None;
     let mut best_rating = 0;
     for candidate in player_moves(player, &board) {
+        if history.contains(&candidate) { continue }
         if checkmate(&candidate).is_some() {
             return Some(candidate);
         }
