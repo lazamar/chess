@@ -123,7 +123,7 @@ fn play() -> String {
         println!("{turn:?} played");
         println!("{}\n\n", PrettyBoard(board));
         i += 1;
-        thread::sleep(Duration::from_millis(0));
+        thread::sleep(Duration::from_millis(5_00));
         match checkmate(&board) {
             None => {}
             Some(player) => return format!("The winner is: {player:?}"),
@@ -174,15 +174,33 @@ fn make_move(player: Player, board: &Board) -> Option<Board> {
 
 // All possible moves for a Player
 fn player_moves(player: Player, board: &Board) -> Vec<Board> {
-    let mut results = Vec::new();
-    for (pos, piece) in board.iter().enumerate() {
-        match *piece {
-            None => {}
-            Some(Piece(p, c)) => {
-                if p == player {
-                    piece_moves(Piece(p, c), pos, &board, &mut results);
-                }
+    let mut results : Vec<Board> = Vec::new();
+    for (pos, o_piece) in board.iter().enumerate() {
+        let Piece(p, c) = match *o_piece {
+            None => continue,
+            Some(p) => p
+        };
+
+        // don't move other player's pieces
+        if p != player { continue }
+
+        // gather all the moves
+        let moves = match c {
+            Character::Pawn => pawn_moves(player, pos, board),
+            _ => Vec::new(),
+        };
+
+        // creaete boards with those moves
+        for new_pos in moves.iter() {
+            // skip moves that take pieces of the same colour as the current player
+            if let Some(Piece(other,_)) = at(*new_pos, board) {
+                if other == player { continue }
             }
+            results.push(board.clone());
+            results.last_mut().map(|b| {
+                b[pos] = None;
+                b[*new_pos as usize] = Some(Piece(p, c));
+            });
         }
     }
     results
@@ -192,25 +210,6 @@ fn at(i: u8, board: &Board) -> Option<Piece> {
     board[i as usize]
 }
 
-fn piece_moves(piece: Piece, pos: usize, board: &Board, results: &mut Vec<Board>) -> () {
-    let Piece(player, c) = piece;
-    let moves = match c {
-        Character::Pawn => pawn_moves(player, pos, board),
-        _ => Vec::new(),
-    };
-
-    for new_pos in moves.iter() {
-        // skip moves that take pieces of the same colour as the current player
-        if let Some(Piece(other,_)) = at(*new_pos, board) {
-            if other == player { continue }
-        }
-        results.push(board.clone());
-        results.last_mut().map(|b| {
-            b[pos] = None;
-            b[*new_pos as usize] = Some(piece);
-        });
-    }
-}
 // ----------------------------------------------------------------------
 // Piece moves
 // ----------------------------------------------------------------------
@@ -262,31 +261,23 @@ fn rate(board: &Board) -> Rating {
         };
     };
     for (pos, piece) in board.iter().enumerate() {
-        match piece {
-            None => {}
-            Some(Piece(player, Character::Pawn)) => match &player {
-                Player::White => {
-                    next_row(pos as u8)
-                        .and_then(next_col)
-                        .map(|p| attack(*player, p));
-                    next_row(pos as u8)
-                        .and_then(prev_col)
-                        .map(|p| attack(*player, p));
-                }
-                Player::Black => {
-                    prev_row(pos as u8)
-                        .and_then(next_col)
-                        .map(|p| attack(*player, p));
-                    prev_row(pos as u8)
-                        .and_then(prev_col)
-                        .map(|p| attack(*player, p));
-                }
-            },
-            Some(Piece(player, Character::Hook)) => {}
-            Some(Piece(player, Character::Knight)) => {}
-            Some(Piece(player, Character::Bishop)) => {}
-            Some(Piece(player, Character::Queen)) => {}
-            Some(Piece(player, Character::King)) => {}
+        let (player, moves) = match *piece {
+            None => { continue },
+            Some(Piece(player, Character::Pawn)) => (player, pawn_moves(player, pos, board)),
+            Some(Piece(player, Character::Hook)) => (player, Vec::new()),
+            Some(Piece(player, Character::Knight)) => (player, Vec::new()),
+            Some(Piece(player, Character::Bishop)) => (player, Vec::new()),
+            Some(Piece(player, Character::Queen)) => (player, Vec::new()),
+            Some(Piece(player, Character::King)) => (player, Vec::new())
+        };
+        for target in moves.iter() {
+            let Piece(other,_) = match at(*target as u8, board) {
+                None => continue,
+                Some(p) => p
+            };
+            if other != player {
+                attack(other, *target);
+            }
         }
     }
 
