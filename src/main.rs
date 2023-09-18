@@ -251,9 +251,14 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
         Player::White => Player::Black,
         Player::Black => Player::White,
     };
+    println!("{}\n\n", PrettyBoard(board));
 
     let mut i = 0;
     loop {
+        match delay {
+            None => {}
+            Some(millis) => thread::sleep(Duration::from_millis(millis)),
+        };
         match make_move(turn, &board, &history) {
             None => return "Draw!".to_string(),
             Some(b) => board = b,
@@ -263,10 +268,6 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
             println!("{}\n\n", PrettyBoard(board));
         }
         i += 1;
-        match delay {
-            None => {}
-            Some(millis) => thread::sleep(Duration::from_millis(millis)),
-        };
         match checkmate(&board) {
             None => {}
             Some(player) => return format!("The winner is: {player:?}"),
@@ -381,23 +382,41 @@ fn populated(pos: u8, board: &Board) -> bool {
 }
 
 fn pawn_moves(player: Player, pos: usize, board: &Board) -> Vec<u8> {
-    let mut moves = Vec::new();
+    let mut moves: Vec<u8> = Vec::new();
+    let pos = pos as u8;
 
     // move forward
-    match player {
-        Player::Black => prev_row(pos as u8),
-        Player::White => next_row(pos as u8),
+    let fwd_candidates = match player {
+        Player::Black => {
+            if row_number(pos) == 6 {
+                vec!(prev_row(pos), prev_row(pos).and_then(prev_row))
+            } else {
+                vec!(prev_row(pos))
+            }
+        },
+        Player::White => {
+            if row_number(pos) == 1 {
+                vec!(next_row(pos), next_row(pos).and_then(next_row))
+            } else {
+                vec!(next_row(pos))
+            }
+        }
+    };
+    let fwd_moves = fwd_candidates
+        .iter()
+        .flatten()
+        .filter(|pos_| {
+            let occupied = at(**pos_, board).is_some();
+            !occupied
+        });
+    for m in fwd_moves {
+        moves.push(*m);
     }
-    .filter(|pos_| {
-        let occupied = at(*pos_, board).is_some();
-        !occupied
-    })
-    .map(|p| moves.push(p));
 
     // take piece
     let positions = match player {
-        Player::Black => prev_row(pos as u8),
-        Player::White => next_row(pos as u8),
+        Player::Black => prev_row(pos),
+        Player::White => next_row(pos),
     }
     .map_or(Vec::new(), |pos_| vec![next_col(pos_), prev_col(pos_)]);
     for pp in positions.iter() {
