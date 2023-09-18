@@ -213,8 +213,11 @@ fn player_moves(player: Player, board: &Board) -> Vec<Board> {
         // gather all the moves
         let moves = match c {
             Character::Pawn => pawn_moves(player, pos, board),
+            Character::Hook => hook_moves(pos, board),
             Character::Bishop => bishop_moves(pos, board),
-            _ => Vec::new(),
+            Character::Knight => knight_moves(pos),
+            Character::Queen => queen_moves(pos, board),
+            Character::King => king_moves(pos),
         };
 
         // creaete boards with those moves
@@ -279,18 +282,13 @@ fn pawn_moves(player: Player, pos: usize, board: &Board) -> Vec<u8> {
     moves
 }
 
-fn bishop_moves(pos: usize, board: &Board) -> Vec<u8> {
+fn long_range_moves(
+    pos: usize,
+    board: &Board,
+    fns : Vec<impl Fn(u8) -> Option<u8>>) -> Vec<u8> {
     let mut moves = Vec::new();
 
-    // North-east
-    for go in [
-        |p| next_row(p).and_then(next_col), // north-east
-        |p| next_row(p).and_then(prev_col), // north-west
-        |p| prev_row(p).and_then(next_col), // south-east
-        |p| prev_row(p).and_then(prev_col), // south-west
-    ]
-    // south-west
-    {
+    for go in fns {
         let mut new_pos = pos as u8;
         loop {
             new_pos = match go(new_pos) {
@@ -304,6 +302,77 @@ fn bishop_moves(pos: usize, board: &Board) -> Vec<u8> {
         }
     }
     moves
+}
+
+fn bishop_moves(pos: usize, board: &Board) -> Vec<u8> {
+    long_range_moves(pos, board, vec!(
+        |p| next_row(p).and_then(next_col), // north-east
+        |p| next_row(p).and_then(prev_col), // north-west
+        |p| prev_row(p).and_then(next_col), // south-east
+        |p| prev_row(p).and_then(prev_col), // south-west
+    ))
+}
+
+fn hook_moves(pos: usize, board: &Board) -> Vec<u8> {
+    long_range_moves(pos, board, vec!(
+        |p| next_row(p), // north
+        |p| prev_row(p), // south
+        |p| next_col(p), // east
+        |p| prev_col(p), // west
+    ))
+}
+
+fn queen_moves(pos: usize, board: &Board) -> Vec<u8> {
+    long_range_moves(pos, board, vec!(
+        |p| next_row(p).and_then(next_col), // north-east
+        |p| next_row(p).and_then(prev_col), // north-west
+        |p| prev_row(p).and_then(next_col), // south-east
+        |p| prev_row(p).and_then(prev_col), // south-west
+        |p| next_row(p), // north
+        |p| prev_row(p), // south
+        |p| next_col(p), // east
+        |p| prev_col(p), // west
+    ))
+}
+
+fn short_range_moves(
+    pos: usize,
+    fns : Vec<impl Fn(u8) -> Option<u8>>) -> Vec<u8> {
+    let mut moves = Vec::new();
+
+    for go in fns {
+        match go(pos as u8) {
+            None => {},
+            Some(p) => moves.push(p)
+        };
+    }
+    moves
+}
+
+fn king_moves(pos: usize) -> Vec<u8> {
+    short_range_moves(pos, vec!(
+        |p| next_row(p).and_then(next_col), // north-east
+        |p| next_row(p).and_then(prev_col), // north-west
+        |p| prev_row(p).and_then(next_col), // south-east
+        |p| prev_row(p).and_then(prev_col), // south-west
+        |p| next_row(p), // north
+        |p| prev_row(p), // south
+        |p| next_col(p), // east
+        |p| prev_col(p), // west
+    ))
+}
+
+fn knight_moves(pos: usize) -> Vec<u8> {
+    short_range_moves(pos, vec!(
+        |p| next_row(p).and_then(next_row).and_then(next_col), // north-east
+        |p| next_row(p).and_then(next_row).and_then(prev_col), // north-west
+        |p| prev_row(p).and_then(prev_row).and_then(next_col), // south-east
+        |p| prev_row(p).and_then(prev_row).and_then(prev_col), // south-west
+        |p| next_col(p).and_then(next_col).and_then(next_row), // east-north
+        |p| next_col(p).and_then(next_col).and_then(prev_row), // east-south
+        |p| prev_col(p).and_then(prev_col).and_then(next_row), // west-north
+        |p| prev_col(p).and_then(prev_col).and_then(prev_row), // west-south
+    ))
 }
 
 // The rating represents how good the game looks for the white player.
@@ -323,11 +392,11 @@ fn rate(board: &Board) -> Rating {
         let (player, moves) = match *piece {
             None => continue,
             Some(Piece(player, Character::Pawn)) => (player, pawn_moves(player, pos, board)),
-            Some(Piece(player, Character::Hook)) => (player, Vec::new()),
-            Some(Piece(player, Character::Knight)) => (player, Vec::new()),
+            Some(Piece(player, Character::Hook)) => (player, hook_moves(pos, board)),
             Some(Piece(player, Character::Bishop)) => (player, bishop_moves(pos, board)),
-            Some(Piece(player, Character::Queen)) => (player, Vec::new()),
-            Some(Piece(player, Character::King)) => (player, Vec::new()),
+            Some(Piece(player, Character::Knight)) => (player, knight_moves(pos)),
+            Some(Piece(player, Character::Queen)) => (player, queen_moves(pos, board)),
+            Some(Piece(player, Character::King)) => (player, king_moves(pos)),
         };
         for target in moves.iter() {
             let Piece(other, _) = match at(*target as u8, board) {
