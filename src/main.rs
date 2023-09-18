@@ -9,15 +9,15 @@ use std::{thread, time::Duration};
 struct CliOptions {
     /// Run the game slowly so that a human can follow
     #[arg(long)]
-    slow : bool,
+    slow: bool,
 
     /// Print the board at each round
     #[arg(long)]
-    print : bool,
+    print: bool,
 
     /// Print the board at each round
     #[arg(long, value_name = "N", default_value_t = 100)]
-    rounds : usize,
+    rounds: usize,
 }
 
 fn main() -> () {
@@ -125,7 +125,7 @@ impl fmt::Display for PrettyBoard {
 // Playing
 // -----------------
 
-fn play(delay : Option<u64>, print : bool, max_rounds: usize) -> String {
+fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
     let mut board = starting_board();
     let mut turn = Player::White;
     let next = |p| match p {
@@ -145,8 +145,8 @@ fn play(delay : Option<u64>, print : bool, max_rounds: usize) -> String {
         }
         i += 1;
         match delay {
-            None => {},
-            Some(millis) => thread::sleep(Duration::from_millis(millis))
+            None => {}
+            Some(millis) => thread::sleep(Duration::from_millis(millis)),
         };
         match checkmate(&board) {
             None => {}
@@ -198,27 +198,32 @@ fn make_move(player: Player, board: &Board) -> Option<Board> {
 
 // All possible moves for a Player
 fn player_moves(player: Player, board: &Board) -> Vec<Board> {
-    let mut results : Vec<Board> = Vec::new();
+    let mut results: Vec<Board> = Vec::new();
     for (pos, o_piece) in board.iter().enumerate() {
         let Piece(p, c) = match *o_piece {
             None => continue,
-            Some(p) => p
+            Some(p) => p,
         };
 
         // don't move other player's pieces
-        if p != player { continue }
+        if p != player {
+            continue;
+        }
 
         // gather all the moves
         let moves = match c {
             Character::Pawn => pawn_moves(player, pos, board),
+            Character::Bishop => bishop_moves(pos, board),
             _ => Vec::new(),
         };
 
         // creaete boards with those moves
         for new_pos in moves.iter() {
             // skip moves that take pieces of the same colour as the current player
-            if let Some(Piece(other,_)) = at(*new_pos, board) {
-                if other == player { continue }
+            if let Some(Piece(other, _)) = at(*new_pos, board) {
+                if other == player {
+                    continue;
+                }
             }
             results.push(board.clone());
             results.last_mut().map(|b| {
@@ -237,6 +242,10 @@ fn at(i: u8, board: &Board) -> Option<Piece> {
 // ----------------------------------------------------------------------
 // Piece moves
 // ----------------------------------------------------------------------
+
+fn populated(pos: u8, board: &Board) -> bool {
+    at(pos as u8, board).is_some()
+}
 
 fn pawn_moves(player: Player, pos: usize, board: &Board) -> Vec<u8> {
     let mut moves = Vec::new();
@@ -263,9 +272,35 @@ fn pawn_moves(player: Player, pos: usize, board: &Board) -> Vec<u8> {
             Some(new_pos) => new_pos,
             None => continue,
         };
-        match at(*new_pos, board) {
-            Some(_) => moves.push(*new_pos),
-            None => {}
+        if populated(*new_pos, board) {
+            moves.push(*new_pos);
+        }
+    }
+    moves
+}
+
+fn bishop_moves(pos: usize, board: &Board) -> Vec<u8> {
+    let mut moves = Vec::new();
+
+    // North-east
+    for go in [
+        |p| next_row(p).and_then(next_col), // north-east
+        |p| next_row(p).and_then(prev_col), // north-west
+        |p| prev_row(p).and_then(next_col), // south-east
+        |p| prev_row(p).and_then(prev_col), // south-west
+    ]
+    // south-west
+    {
+        let mut new_pos = pos as u8;
+        loop {
+            new_pos = match go(new_pos) {
+                None => break,
+                Some(p) => p,
+            };
+            moves.push(new_pos);
+            if populated(new_pos, board) {
+                break;
+            }
         }
     }
     moves
@@ -286,18 +321,18 @@ fn rate(board: &Board) -> Rating {
     };
     for (pos, piece) in board.iter().enumerate() {
         let (player, moves) = match *piece {
-            None => { continue },
+            None => continue,
             Some(Piece(player, Character::Pawn)) => (player, pawn_moves(player, pos, board)),
             Some(Piece(player, Character::Hook)) => (player, Vec::new()),
             Some(Piece(player, Character::Knight)) => (player, Vec::new()),
-            Some(Piece(player, Character::Bishop)) => (player, Vec::new()),
+            Some(Piece(player, Character::Bishop)) => (player, bishop_moves(pos, board)),
             Some(Piece(player, Character::Queen)) => (player, Vec::new()),
-            Some(Piece(player, Character::King)) => (player, Vec::new())
+            Some(Piece(player, Character::King)) => (player, Vec::new()),
         };
         for target in moves.iter() {
-            let Piece(other,_) = match at(*target as u8, board) {
+            let Piece(other, _) = match at(*target as u8, board) {
                 None => continue,
-                Some(p) => p
+                Some(p) => p,
             };
             if other != player {
                 attack(other, *target);
