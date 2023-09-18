@@ -141,10 +141,7 @@ fn interactive() -> String {
     println!("{}\n\n", PrettyBoard(board));
 
     loop {
-        println!("Your turn. Type the coordinates you want to move from: ");
-        let from = read_pos();
-        println!("Type the coordinates you want to move to: ");
-        let to = read_pos();
+        let (from, to) = read_user_move(&board);
         board[to as usize] = at(from, &board);
         board[from as usize] = None;
 
@@ -165,6 +162,46 @@ fn interactive() -> String {
         if checkmate(&board).is_some() {
             return "You lose!".to_string();
         }
+    }
+}
+
+fn read_user_move(board : &Board) -> (u8, u8) {
+    loop {
+        println!("Type the coordinates you want to move from: ");
+        let from = read_pos();
+
+        let character = match at(from, board) {
+            None => {
+                println!("This cell is empty. Choose one with a white piece.");
+                continue;
+            },
+            Some(Piece(Player::Black,_)) => {
+                println!("This cell has a black piece. You are playing with the whites.");
+                continue;
+            },
+            Some(Piece(Player::White,c)) => c
+        };
+
+        println!("Type the coordinates you want to move to: ");
+        let to = read_pos();
+
+        let possible = piece_moves(Player::White, character, from as usize, board);
+
+        if let None = possible.iter().find(|&&p| p == to) {
+            println!("Invalid move. Try again.");
+            continue;
+        }
+
+        match at(to, board) {
+            None => {},
+            Some(Piece(Player::Black,_)) => {},
+            Some(Piece(Player::White,_)) => {
+                println!("You can't take a white piece. Try again.");
+                continue;
+            }
+        };
+
+        return (from, to);
     }
 }
 
@@ -291,14 +328,7 @@ fn player_moves(player: Player, board: &Board) -> Vec<Board> {
         }
 
         // gather all the moves
-        let moves = match c {
-            Character::Pawn => pawn_moves(player, pos, board),
-            Character::Hook => hook_moves(pos, board),
-            Character::Bishop => bishop_moves(pos, board),
-            Character::Knight => knight_moves(pos),
-            Character::Queen => queen_moves(pos, board),
-            Character::King => king_moves(pos),
-        };
+        let moves = piece_moves(p, c, pos, board);
 
         // creaete boards with those moves
         for new_pos in moves.iter() {
@@ -316,6 +346,17 @@ fn player_moves(player: Player, board: &Board) -> Vec<Board> {
         }
     }
     results
+}
+
+fn piece_moves(player: Player, character: Character, pos: usize, board: &Board) -> Vec<u8> {
+    match character {
+        Character::Pawn => pawn_moves(player, pos, board),
+        Character::Hook => hook_moves(pos, board),
+        Character::Bishop => bishop_moves(pos, board),
+        Character::Knight => knight_moves(pos),
+        Character::Queen => queen_moves(pos, board),
+        Character::King => king_moves(pos),
+    }
 }
 
 fn at(i: u8, board: &Board) -> Option<Piece> {
