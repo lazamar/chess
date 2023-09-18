@@ -118,7 +118,7 @@ fn play() -> String {
     loop {
         match make_move(turn, &board) {
             None => return "Draw!".to_string(),
-            Some(b) =>  board = b
+            Some(b) => board = b,
         }
         println!("{turn:?} played");
         println!("{}\n\n", PrettyBoard(board));
@@ -193,24 +193,30 @@ fn at(i: u8, board: &Board) -> Option<Piece> {
 }
 
 fn piece_moves(piece: Piece, pos: usize, board: &Board, results: &mut Vec<Board>) -> () {
-    let Piece(p, c) = piece;
-    match c {
-        Character::Pawn => move_pawn(p, pos, board, results, move |p_: Player| p_ != p),
-        _ => {}
+    let Piece(player, c) = piece;
+    let moves = match c {
+        Character::Pawn => pawn_moves(player, pos, board),
+        _ => Vec::new(),
+    };
+
+    for new_pos in moves.iter() {
+        // skip moves that take pieces of the same colour as the current player
+        if let Some(Piece(other,_)) = at(*new_pos, board) {
+            if other == player { continue }
+        }
+        results.push(board.clone());
+        results.last_mut().map(|b| {
+            b[pos] = None;
+            b[*new_pos as usize] = Some(piece);
+        });
     }
 }
 // ----------------------------------------------------------------------
 // Piece moves
 // ----------------------------------------------------------------------
 
-fn move_pawn(
-    player: Player,
-    pos: usize,
-    board: &Board,
-    results: &mut Vec<Board>,
-    accept: impl Fn(Player) -> bool,
-) -> () {
-    let piece = Piece(player, Character::Pawn);
+fn pawn_moves(player: Player, pos: usize, board: &Board) -> Vec<u8> {
+    let mut moves = Vec::new();
 
     // move forward
     match player {
@@ -221,39 +227,25 @@ fn move_pawn(
         let occupied = at(*pos_, board).is_some();
         !occupied
     })
-    .map(|new_pos| {
-        results.push(board.clone());
-        results.last_mut().map(|board| {
-            board[pos] = None;
-            board[new_pos as usize] = Some(piece);
-        });
-    });
+    .map(|p| moves.push(p));
 
     // take piece
     let positions = match player {
         Player::Black => prev_row(pos as u8),
         Player::White => next_row(pos as u8),
     }
-    .map_or(Vec::new(), |pos_| [next_col(pos_), prev_col(pos_)].to_vec());
+    .map_or(Vec::new(), |pos_| vec![next_col(pos_), prev_col(pos_)]);
     for pp in positions.iter() {
         let new_pos = match pp {
             Some(new_pos) => new_pos,
-            None => continue
+            None => continue,
         };
         match at(*new_pos, board) {
-            Some(Piece(p,_)) => {
-                if !accept(p) {
-                    continue
-                }
-            }
-            None => continue
+            Some(_) => moves.push(*new_pos),
+            None => {}
         }
-        results.push(board.clone());
-        results.last_mut().map(|board| {
-            board[pos] = None;
-            board[*new_pos as usize] = Some(piece);
-        });
     }
+    moves
 }
 
 // The rating represents how good the game looks for the white player.
