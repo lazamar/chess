@@ -1,6 +1,7 @@
 use clap::Parser;
 use core::fmt::Debug;
 use std::fmt;
+use std::io;
 use std::{thread, time::Duration};
 
 /// Play a game of chess
@@ -18,12 +19,21 @@ struct CliOptions {
     /// Print the board at each round
     #[arg(long, value_name = "N", default_value_t = 100)]
     rounds: usize,
+
+    /// Play against the machine
+    #[arg(long)]
+    interactive: bool,
 }
 
 fn main() -> () {
     let cli = CliOptions::parse();
     let delay = if cli.slow { Some(600) } else { None };
-    println!("{}", play(delay, cli.print, cli.rounds));
+
+    if cli.interactive {
+        println!("{}", interactive());
+    } else {
+        println!("{}", play(delay, cli.print, cli.rounds));
+    }
 }
 
 // -----------------
@@ -117,13 +127,83 @@ impl fmt::Display for PrettyBoard {
             .and(row(2))
             .and(row(1))
             .and(row(0))
-            .and(write!(f, " A  B  C  D  E  F  G  H "))
+            .and(write!(f, "   A  B  C  D  E  F  G  H "))
     }
 }
 
 // -----------------
 // Playing
 // -----------------
+
+fn interactive() -> String {
+    let mut board = starting_board();
+    println!("You are the white player. You begin.");
+    println!("{}\n\n", PrettyBoard(board));
+
+    loop {
+        println!("Your turn. Type the coordinates you want to move from: ");
+        let from = read_pos();
+        println!("Type the coordinates you want to move to: ");
+        let to = read_pos();
+        board[to as usize] = at(from, &board);
+        board[from as usize] = None;
+
+        println!("You played");
+        println!("{}\n\n", PrettyBoard(board));
+        if checkmate(&board).is_some() {
+            return "You win!".to_string();
+        }
+
+        thread::sleep(Duration::from_millis(800));
+        match make_move(Player::Black, &board) {
+            None => return "Draw!".to_string(),
+            Some(b) => board = b,
+        }
+
+        println!("I played");
+        println!("{}\n\n", PrettyBoard(board));
+        if checkmate(&board).is_some() {
+            return "You lose!".to_string();
+        }
+    }
+}
+
+fn read_pos() -> u8 {
+    loop {
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(_) => {
+                let pos = input
+                    .chars()
+                    .nth(0)
+                    .and_then(|n| match n {
+                        'A' => Some(0),
+                        'B' => Some(1),
+                        'C' => Some(2),
+                        'D' => Some(3),
+                        'E' => Some(4),
+                        'F' => Some(5),
+                        'G' => Some(6),
+                        'H' => Some(7),
+                        _ => None,
+                    })
+                    .and_then(|col| {
+                        input
+                            .chars()
+                            .nth(1)
+                            .and_then(|n| n.to_digit(10))
+                            .map(|row| row * 8 + col)
+                    });
+                match pos {
+                    None => {}
+                    Some(p) => return p as u8,
+                }
+            }
+            Err(_) => {}
+        };
+        println!("Invalid position. An example valid position is 'A5'");
+    }
+}
 
 fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
     let mut board = starting_board();
@@ -282,10 +362,7 @@ fn pawn_moves(player: Player, pos: usize, board: &Board) -> Vec<u8> {
     moves
 }
 
-fn long_range_moves(
-    pos: usize,
-    board: &Board,
-    fns : Vec<impl Fn(u8) -> Option<u8>>) -> Vec<u8> {
+fn long_range_moves(pos: usize, board: &Board, fns: Vec<impl Fn(u8) -> Option<u8>>) -> Vec<u8> {
     let mut moves = Vec::new();
 
     for go in fns {
@@ -305,74 +382,90 @@ fn long_range_moves(
 }
 
 fn bishop_moves(pos: usize, board: &Board) -> Vec<u8> {
-    long_range_moves(pos, board, vec!(
-        |p| next_row(p).and_then(next_col), // north-east
-        |p| next_row(p).and_then(prev_col), // north-west
-        |p| prev_row(p).and_then(next_col), // south-east
-        |p| prev_row(p).and_then(prev_col), // south-west
-    ))
+    long_range_moves(
+        pos,
+        board,
+        vec![
+            |p| next_row(p).and_then(next_col), // north-east
+            |p| next_row(p).and_then(prev_col), // north-west
+            |p| prev_row(p).and_then(next_col), // south-east
+            |p| prev_row(p).and_then(prev_col), // south-west
+        ],
+    )
 }
 
 fn hook_moves(pos: usize, board: &Board) -> Vec<u8> {
-    long_range_moves(pos, board, vec!(
-        |p| next_row(p), // north
-        |p| prev_row(p), // south
-        |p| next_col(p), // east
-        |p| prev_col(p), // west
-    ))
+    long_range_moves(
+        pos,
+        board,
+        vec![
+            |p| next_row(p), // north
+            |p| prev_row(p), // south
+            |p| next_col(p), // east
+            |p| prev_col(p), // west
+        ],
+    )
 }
 
 fn queen_moves(pos: usize, board: &Board) -> Vec<u8> {
-    long_range_moves(pos, board, vec!(
-        |p| next_row(p).and_then(next_col), // north-east
-        |p| next_row(p).and_then(prev_col), // north-west
-        |p| prev_row(p).and_then(next_col), // south-east
-        |p| prev_row(p).and_then(prev_col), // south-west
-        |p| next_row(p), // north
-        |p| prev_row(p), // south
-        |p| next_col(p), // east
-        |p| prev_col(p), // west
-    ))
+    long_range_moves(
+        pos,
+        board,
+        vec![
+            |p| next_row(p).and_then(next_col), // north-east
+            |p| next_row(p).and_then(prev_col), // north-west
+            |p| prev_row(p).and_then(next_col), // south-east
+            |p| prev_row(p).and_then(prev_col), // south-west
+            |p| next_row(p),                    // north
+            |p| prev_row(p),                    // south
+            |p| next_col(p),                    // east
+            |p| prev_col(p),                    // west
+        ],
+    )
 }
 
-fn short_range_moves(
-    pos: usize,
-    fns : Vec<impl Fn(u8) -> Option<u8>>) -> Vec<u8> {
+fn short_range_moves(pos: usize, fns: Vec<impl Fn(u8) -> Option<u8>>) -> Vec<u8> {
     let mut moves = Vec::new();
 
     for go in fns {
         match go(pos as u8) {
-            None => {},
-            Some(p) => moves.push(p)
+            None => {}
+            Some(p) => moves.push(p),
         };
     }
     moves
 }
 
 fn king_moves(pos: usize) -> Vec<u8> {
-    short_range_moves(pos, vec!(
-        |p| next_row(p).and_then(next_col), // north-east
-        |p| next_row(p).and_then(prev_col), // north-west
-        |p| prev_row(p).and_then(next_col), // south-east
-        |p| prev_row(p).and_then(prev_col), // south-west
-        |p| next_row(p), // north
-        |p| prev_row(p), // south
-        |p| next_col(p), // east
-        |p| prev_col(p), // west
-    ))
+    short_range_moves(
+        pos,
+        vec![
+            |p| next_row(p).and_then(next_col), // north-east
+            |p| next_row(p).and_then(prev_col), // north-west
+            |p| prev_row(p).and_then(next_col), // south-east
+            |p| prev_row(p).and_then(prev_col), // south-west
+            |p| next_row(p),                    // north
+            |p| prev_row(p),                    // south
+            |p| next_col(p),                    // east
+            |p| prev_col(p),                    // west
+        ],
+    )
 }
 
 fn knight_moves(pos: usize) -> Vec<u8> {
-    short_range_moves(pos, vec!(
-        |p| next_row(p).and_then(next_row).and_then(next_col), // north-east
-        |p| next_row(p).and_then(next_row).and_then(prev_col), // north-west
-        |p| prev_row(p).and_then(prev_row).and_then(next_col), // south-east
-        |p| prev_row(p).and_then(prev_row).and_then(prev_col), // south-west
-        |p| next_col(p).and_then(next_col).and_then(next_row), // east-north
-        |p| next_col(p).and_then(next_col).and_then(prev_row), // east-south
-        |p| prev_col(p).and_then(prev_col).and_then(next_row), // west-north
-        |p| prev_col(p).and_then(prev_col).and_then(prev_row), // west-south
-    ))
+    short_range_moves(
+        pos,
+        vec![
+            |p| next_row(p).and_then(next_row).and_then(next_col), // north-east
+            |p| next_row(p).and_then(next_row).and_then(prev_col), // north-west
+            |p| prev_row(p).and_then(prev_row).and_then(next_col), // south-east
+            |p| prev_row(p).and_then(prev_row).and_then(prev_col), // south-west
+            |p| next_col(p).and_then(next_col).and_then(next_row), // east-north
+            |p| next_col(p).and_then(next_col).and_then(prev_row), // east-south
+            |p| prev_col(p).and_then(prev_col).and_then(next_row), // west-north
+            |p| prev_col(p).and_then(prev_col).and_then(prev_row), // west-south
+        ],
+    )
 }
 
 // The rating represents how good the game looks for the white player.
@@ -419,7 +512,7 @@ fn rate(board: &Board) -> Rating {
         Character::Knight => 2,
         Character::Bishop => 2,
         Character::Queen => 10,
-        Character::King => 100
+        Character::King => 100,
     };
     for (pos, piece) in board.iter().enumerate() {
         match *piece {
