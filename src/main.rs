@@ -51,8 +51,8 @@ impl fmt::Display for Piece {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Piece(player, char) = self;
         match player {
-            Player::White => write!(f, "\x1b[32m{char}"),
-            Player::Black => write!(f, "\x1b[31m{char}"),
+            Player::White => write!(f, "\x1b[1m\x1b[94m{char}"),
+            Player::Black => write!(f, "\x1b[1m\x1b[31m{char}"),
         }
     }
 }
@@ -75,8 +75,9 @@ impl fmt::Display for PrettyBoard {
         let black = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[40m{p}\x1b[0m");
         let white = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[107m{p}\x1b[0m");
         let at = |i: usize| Position(board[i as usize]);
-        let mut row = |from: usize| {
-            let mut r = Ok(());
+        let mut row = |n: usize| {
+            let from = n * 8;
+            let mut r = write!(f, "{} ", n);
             for i in 0..4 {
                 r = if row_number(from as u8) % 2 == 0 {
                     r.and(black(at(from + 2 * i), f))
@@ -88,14 +89,15 @@ impl fmt::Display for PrettyBoard {
             }
             r.and(write!(f, "\n"))
         };
-        row(0 * 8)
-            .and(row(1 * 8))
-            .and(row(2 * 8))
-            .and(row(3 * 8))
-            .and(row(4 * 8))
-            .and(row(5 * 8))
-            .and(row(6 * 8))
-            .and(row(7 * 8))
+        row(7)
+            .and(row(6))
+            .and(row(5))
+            .and(row(4))
+            .and(row(3))
+            .and(row(2))
+            .and(row(1))
+            .and(row(0))
+            .and(write!(f, " A  B  C  D  E  F  G  H "))
     }
 }
 
@@ -114,20 +116,22 @@ fn play() -> String {
     let max_rounds = 100;
     let mut i = 0;
     loop {
-        turn = next(turn);
         match make_move(turn, &board) {
             None => return "Draw!".to_string(),
-            Some(b) => match checkmate(&b) {
-                None => board = b,
-                Some(player) => return format!("The winner is: {player:?}"),
-            },
+            Some(b) =>  board = b
         }
-        println!("{}", PrettyBoard(board));
+        println!("{turn:?} played");
+        println!("{}\n\n", PrettyBoard(board));
         i += 1;
         thread::sleep(Duration::from_millis(0));
+        match checkmate(&board) {
+            None => {}
+            Some(player) => return format!("The winner is: {player:?}"),
+        }
         if i > max_rounds {
             return "Reached max iterations".to_string();
         }
+        turn = next(turn);
     }
 }
 
