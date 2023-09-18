@@ -562,7 +562,7 @@ fn rate(board: &Board) -> Rating {
                 if b_attack[pos] {
                     w_threatened += weight(c);
                 }
-                if w_attack[pos] {
+                if w_attack[pos] && Character::King != c {
                     w_defended += weight(c);
                 }
             }
