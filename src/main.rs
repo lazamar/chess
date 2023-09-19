@@ -28,6 +28,10 @@ struct CliOptions {
     /// Play against the machine
     #[arg(long)]
     interactive: bool,
+
+    // Enable debugging logging
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() -> () {
@@ -37,7 +41,7 @@ fn main() -> () {
     if cli.interactive {
         println!("{}", interactive());
     } else {
-        println!("{}", play(delay, cli.print, cli.rounds));
+        println!("{}", play(delay, cli.print, cli.rounds, cli.debug));
     }
 }
 
@@ -68,7 +72,10 @@ type Board = [Option<Piece>; 64];
 
 // Pretty printing
 
-struct PrettyBoard(Board);
+struct PrettyBoard {
+    board: Board,
+    debug: bool,
+}
 
 impl fmt::Display for Character {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -108,7 +115,7 @@ impl fmt::Display for Position {
 
 impl fmt::Display for PrettyBoard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let PrettyBoard(board) = self;
+        let PrettyBoard{board,debug} = *self;
         let black = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[40m{p}\x1b[0m");
         let white = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[107m{p}\x1b[0m");
         let at = |i: usize| Position(board[i as usize]);
@@ -124,7 +131,30 @@ impl fmt::Display for PrettyBoard {
                         .and(black(at(from + 2 * i + 1), f))
                 }
             }
-            r.and(write!(f, "\n"))
+
+            if debug {
+                write!(f, " \"")?;
+                for i in from..(from+8) {
+                    let char = match at(i).0 {
+                         None                                             => ' ',
+                         Some(Piece(Player::White, Character::Rook))      => 'r' ,
+                         Some(Piece(Player::White, Character::Knight))    => 'h' ,
+                         Some(Piece(Player::White, Character::Bishop))    => 'b' ,
+                         Some(Piece(Player::White, Character::Queen))     => 'q' ,
+                         Some(Piece(Player::White, Character::King))      => 'k' ,
+                         Some(Piece(Player::White, Character::Pawn))      => 'p' ,
+                         Some(Piece(Player::Black, Character::Rook))      => 'R' ,
+                         Some(Piece(Player::Black, Character::Knight))    => 'H' ,
+                         Some(Piece(Player::Black, Character::Bishop))    => 'B' ,
+                         Some(Piece(Player::Black, Character::Queen))     => 'Q' ,
+                         Some(Piece(Player::Black, Character::King))      => 'K' ,
+                         Some(Piece(Player::Black, Character::Pawn))      => 'P'
+                    };
+                    write!(f, "{}", char)?;
+                }
+                write!(f, "\"")?;
+            }
+            write!(f, "\n")
         };
         row(7)
             .and(row(6))
@@ -145,7 +175,7 @@ impl fmt::Display for PrettyBoard {
 fn interactive() -> String {
     let mut board = starting_board();
     println!("You are the white player. You begin.");
-    println!("{}\n\n", PrettyBoard(board));
+    println!("{}\n\n", PrettyBoard{board, debug : false});
 
     loop {
         let (from, to) = read_user_move(&board);
@@ -153,7 +183,7 @@ fn interactive() -> String {
         board[from as usize] = None;
 
         println!("You played");
-        println!("{}\n\n", PrettyBoard(board));
+        println!("{}\n\n", PrettyBoard{board, debug : false});
         if checkmate(&board).is_some() {
             return "You win!".to_string();
         }
@@ -166,7 +196,7 @@ fn interactive() -> String {
         }
 
         println!("I played");
-        println!("{}\n\n", PrettyBoard(board));
+        println!("{}\n\n", PrettyBoard{board, debug: false});
         if checkmate(&board).is_some() {
             return "You lose!".to_string();
         }
@@ -257,11 +287,11 @@ fn empty_history() -> History {
     Arc::new(Mutex::new(BTreeSet::<Board>::new()))
 }
 
-fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
+fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool) -> String {
     let history = Arc::new(Mutex::new(BTreeSet::new()));
     let mut board = starting_board();
     let mut turn = Player::White;
-    println!("{}\n\n", PrettyBoard(board));
+    println!("{}\n\n", PrettyBoard{board, debug});
 
     let mut i = 0;
     loop {
@@ -285,7 +315,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
         };
         if print {
             println!("{turn:?} played");
-            println!("{}\n\n", PrettyBoard(board));
+            println!("{}\n\n", PrettyBoard{board, debug});
         }
         i += 1;
         match checkmate(&board) {
@@ -793,15 +823,17 @@ fn row_number(pos: u8) -> u8 {
     pos / 8
 }
 
-fn col_number(pos: u8) -> u8 {
-    pos % 8
-}
-
+#[rustfmt::skip]
 fn starting_board() -> Board {
-    make_board([
-        "RHBQKBHR", "PPPPPPPP", "        ", "        ", "        ", "        ", "pppppppp",
-        "rhbkqbhr",
-    ])
+    make_board(
+        [ "RHBQKBHR"
+        , "PPPPPPPP"
+        , "        "
+        , "        "
+        , "        "
+        , "        "
+        , "pppppppp"
+        , "rhbkqbhr" ])
 }
 
 // -----------------
@@ -834,6 +866,13 @@ fn make_board(mut chars: [&str; 8]) -> Board {
         }
     }
     return board;
+}
+
+fn is(character: Character, piece: Option<Piece>) -> bool {
+    match piece {
+        None => false,
+        Some(Piece(_,c)) => c == character
+    }
 }
 
 #[rustfmt::skip]
@@ -870,4 +909,23 @@ mod chess_tests {
         board = make_move(Player::White, &board, empty_history(), LookAhead(0)).unwrap().0;
         assert_eq!(Some(Player::White), checkmate(&board));
     }
+
+    #[test]
+    fn dont_take_equivalent_swap() {
+        let mut board = make_board(
+            [ "R  QKBHR"
+            , "PPPH PPP"
+            , "  B     "
+            , "   PP   "
+            , "    pp  "
+            , "bph     "
+            , "p pp  pp"
+            , "r k qbhr"]);
+
+        board = make_move(Player::White, &board, empty_history(), LookAhead(1)).unwrap().0;
+        let bishop_count = board.iter().filter(|p| is(Character::Bishop, **p)).count();
+        assert_eq!(bishop_count, 4);
+    }
+
+
 }
