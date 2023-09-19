@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
+use std::time::SystemTime;
 
 /// Play a game of chess
 #[derive(Parser, Debug)]
@@ -65,6 +66,8 @@ struct Piece(Player, Character);
 
 type Board = [Option<Piece>; 64];
 
+// Pretty printing
+
 struct PrettyBoard(Board);
 
 impl fmt::Display for Character {
@@ -111,7 +114,7 @@ impl fmt::Display for PrettyBoard {
         let at = |i: usize| Position(board[i as usize]);
         let mut row = |n: usize| {
             let from = n * 8;
-            let mut r = write!(f, "{} ", n);
+            let mut r = write!(f, "{} ", n + 1);
             for i in 0..4 {
                 r = if row_number(from as u8) % 2 == 0 {
                     r.and(black(at(from + 2 * i), f))
@@ -234,6 +237,7 @@ fn read_pos() -> u8 {
                             .chars()
                             .nth(1)
                             .and_then(|n| n.to_digit(10))
+                            .map(|row| row - 1) // 1-indexed to 0-indexed
                             .map(|row| row * 8 + col)
                     });
                 match pos {
@@ -257,14 +261,21 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
 
     let mut i = 0;
     loop {
-        match delay {
-            None => {}
-            Some(millis) => thread::sleep(Duration::from_millis(millis)),
-        };
+        let before = SystemTime::now();
         match make_move(turn, &board, history.clone(), 3, true) {
             None => return "Draw!".to_string(),
             Some((b, _)) => board = b,
         }
+        let after = SystemTime::now();
+        match delay {
+            None => {}
+            Some(millis) => {
+                let elapsed = after.duration_since(before).expect("delay failure").as_millis();
+                if elapsed < millis.into() {
+                    thread::sleep(Duration::from_millis(millis - elapsed as u64));
+                }
+            }
+        };
         if print {
             println!("{turn:?} played");
             println!("{}\n\n", PrettyBoard(board));
@@ -324,34 +335,36 @@ fn make_move(
     if top_level {
         let mut handles = Vec::new();
         for candidate in player_moves(player, &board) {
-            let hist = history.lock().unwrap();
-            let history = history.clone();
-            if hist.contains(&candidate) {
-                continue;
+            {   let hist = history.lock().unwrap();
+                if hist.contains(&candidate) {
+                    continue;
+                }
             }
-            let handle = thread::spawn(move || -> (Board, Rating) {
+            let history = history.clone();
+            let handle = thread::spawn(move || -> Rating {
                 if checkmate(&candidate).is_some() {
-                    return (candidate, best_rating_for(player));
+                    return best_rating_for(player);
                 }
 
                 if look_ahead == 0 {
-                    (candidate, rate(player, &candidate))
+                    rate(player, &candidate)
                 } else {
                     make_move(
                         next_player(player),
                         &candidate,
-                        history.clone(),
+                        history,
                         look_ahead - 1,
                         false,
                     )
                     .unwrap()
+                    .1
                 }
             });
-            handles.push(handle);
+            handles.push((candidate, handle));
         }
 
-        for handle in handles.into_iter() {
-            candidates.push(handle.join().unwrap());
+        for (candidate, handle) in handles.into_iter() {
+            candidates.push((candidate, handle.join().unwrap()));
         }
     } else {
         for candidate in player_moves(player, &board) {
@@ -625,7 +638,7 @@ fn knight_moves(pos: usize) -> Vec<u8> {
 }
 
 // The rating represents how good the game looks for the white player.
-type Rating = i64;
+type Rating = (i64, u8);
 
 fn rate(
     _turn: Player, // player that just played
@@ -674,11 +687,11 @@ fn rate(
         Character::King => 100,
     };
 
-    let attack_multiplier = 2;
+    let attack_multiplier = 3;
     let defend_multiplier = 1;
     let exists_multiplier = 4;
-    let mut w_count = 0;
-    let mut b_count = 0;
+    let mut w_exists = 0;
+    let mut b_exists = 0;
 
     for (pos, piece) in board.iter().enumerate() {
         match *piece {
@@ -695,7 +708,7 @@ fn rate(
                         w_defended += defend_multiplier * weight(c);
                     }
                 }
-                w_count += weight(c) * exists_multiplier;
+                w_exists += weight(c) * exists_multiplier;
             }
             Some(Piece(Player::Black, Character::King)) => {
                 if w_attack[pos] {
@@ -709,13 +722,13 @@ fn rate(
                         b_defended += defend_multiplier * weight(c);
                     }
                 }
-                b_count += weight(c) * exists_multiplier;
+                b_exists += weight(c) * exists_multiplier;
             }
         }
     }
     let white_vulnerable: i64 = w_threatened - w_defended;
     let black_vulnerable: i64 = b_threatened - b_defended;
-    return black_vulnerable - white_vulnerable + w_count - b_count;
+    return black_vulnerable - white_vulnerable + w_exists - b_exists;
 }
 
 fn next_row(pos: u8) -> Option<u8> {
