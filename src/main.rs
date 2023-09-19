@@ -47,7 +47,7 @@ fn main() -> () {
 
 #[derive(Debug, PartialEq, Copy, Clone, PartialOrd, Eq, Ord)]
 enum Character {
-    Hook,
+    Rook,
     Knight,
     Bishop,
     King,
@@ -74,7 +74,7 @@ impl fmt::Display for Character {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let char = match &self {
             Character::Pawn => "♙",
-            Character::Hook => "♖",
+            Character::Rook => "♖",
             Character::Knight => "♘",
             Character::Bishop => "♗",
             Character::Queen => "♕",
@@ -159,7 +159,7 @@ fn interactive() -> String {
         }
 
         thread::sleep(Duration::from_millis(800));
-        let history = Arc::new(Mutex::new(BTreeSet::<Board>::new()));
+        let history = empty_history();
         match make_move(Player::Black, &board, history, 3, true) {
             None => return "Draw!".to_string(),
             Some((b, _)) => board = b,
@@ -270,7 +270,10 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
         match delay {
             None => {}
             Some(millis) => {
-                let elapsed = after.duration_since(before).expect("delay failure").as_millis();
+                let elapsed = after
+                    .duration_since(before)
+                    .expect("delay failure")
+                    .as_millis();
                 if elapsed < millis.into() {
                     thread::sleep(Duration::from_millis(millis - elapsed as u64));
                 }
@@ -335,7 +338,8 @@ fn make_move(
     if top_level {
         let mut handles = Vec::new();
         for candidate in player_moves(player, &board) {
-            {   let hist = history.lock().unwrap();
+            {
+                let hist = history.lock().unwrap();
                 if hist.contains(&candidate) {
                     continue;
                 }
@@ -456,7 +460,7 @@ fn player_moves(player: Player, board: &Board) -> Vec<Board> {
 fn piece_moves(player: Player, character: Character, pos: usize, board: &Board) -> Vec<u8> {
     match character {
         Character::Pawn => pawn_moves(player, pos, board),
-        Character::Hook => hook_moves(pos, board),
+        Character::Rook => hook_moves(pos, board),
         Character::Bishop => bishop_moves(pos, board),
         Character::Knight => knight_moves(pos),
         Character::Queen => queen_moves(pos, board),
@@ -647,6 +651,24 @@ fn rate(
     let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
     let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
 
+    let mut w_attack_n = 0;
+    let mut b_attack_n = 0;
+    let attack_multiplier = 3;
+    let defend_multiplier = 1;
+    let exists_multiplier = 4;
+    let mut w_exists = 0;
+    let mut b_exists = 0;
+
+    let weight = |c| match c {
+        Character::Pawn => 1,
+        Character::Rook => 5,
+        Character::Knight => 3,
+        Character::Bishop => 3,
+        Character::Queen => 9,
+        Character::King => 100,
+    };
+
+    //
     let mut attack = |player: Player, pos: u8| {
         match player {
             Player::White => w_attack[pos as usize] = true,
@@ -657,19 +679,23 @@ fn rate(
         let (player, moves) = match *piece {
             None => continue,
             Some(Piece(player, Character::Pawn)) => (player, pawn_moves(player, pos, board)),
-            Some(Piece(player, Character::Hook)) => (player, hook_moves(pos, board)),
+            Some(Piece(player, Character::Rook)) => (player, hook_moves(pos, board)),
             Some(Piece(player, Character::Bishop)) => (player, bishop_moves(pos, board)),
             Some(Piece(player, Character::Knight)) => (player, knight_moves(pos)),
             Some(Piece(player, Character::Queen)) => (player, queen_moves(pos, board)),
             Some(Piece(player, Character::King)) => (player, king_moves(pos)),
         };
         for target in moves.iter() {
-            let Piece(other, _) = match at(*target as u8, board) {
+            let Piece(other, c) = match at(*target as u8, board) {
                 None => continue,
                 Some(p) => p,
             };
             if other != player {
                 attack(player, *target);
+                match player {
+                    Player::White => w_attack_n = attack_multiplier * weight(c),
+                    Player::Black => b_attack_n = attack_multiplier * weight(c),
+                }
             }
         }
     }
@@ -678,21 +704,6 @@ fn rate(
     let mut w_defended = 0; // white pieces defended (threatened by a white piece)
     let mut b_threatened = 0;
     let mut b_defended = 0;
-    let weight = |c| match c {
-        Character::Pawn => 1,
-        Character::Hook => 5,
-        Character::Knight => 3,
-        Character::Bishop => 3,
-        Character::Queen => 9,
-        Character::King => 100,
-    };
-
-    let attack_multiplier = 3;
-    let defend_multiplier = 1;
-    let exists_multiplier = 4;
-    let mut w_exists = 0;
-    let mut b_exists = 0;
-
     for (pos, piece) in board.iter().enumerate() {
         match *piece {
             None => {}
@@ -772,89 +783,85 @@ fn col_number(pos: u8) -> u8 {
     pos % 8
 }
 
+fn starting_board() -> Board {
+    make_board([
+        "RHBQKBHR", "PPPPPPPP", "        ", "        ", "        ", "        ", "pppppppp",
+        "rhbkqbhr",
+    ])
+}
+
 // -----------------
 // Tests
 // -----------------
 
+fn make_board(mut chars: [&str; 8]) -> Board {
+    let mut board: Board = [None; 64];
+    let mut ix = 0;
+    chars.reverse();
+    for row in chars {
+        for e in row.chars() {
+            board[ix] = match e {
+                ' ' => None,
+                'r' => Some(Piece(Player::White, Character::Rook)),
+                'h' => Some(Piece(Player::White, Character::Knight)),
+                'b' => Some(Piece(Player::White, Character::Bishop)),
+                'q' => Some(Piece(Player::White, Character::Queen)),
+                'k' => Some(Piece(Player::White, Character::King)),
+                'p' => Some(Piece(Player::White, Character::Pawn)),
+                'R' => Some(Piece(Player::Black, Character::Rook)),
+                'H' => Some(Piece(Player::Black, Character::Knight)),
+                'B' => Some(Piece(Player::Black, Character::Bishop)),
+                'Q' => Some(Piece(Player::Black, Character::Queen)),
+                'K' => Some(Piece(Player::Black, Character::King)),
+                'P' => Some(Piece(Player::Black, Character::Pawn)),
+                _ => panic!("unexpected char"),
+            };
+            ix += 1;
+        }
+    }
+    return board;
+}
+
+fn empty_history() -> History {
+    Arc::new(Mutex::new(BTreeSet::<Board>::new()))
+}
+
+#[rustfmt::skip]
 #[cfg(test)]
 mod chess_tests {
     use super::*;
 
     #[test]
-    fn initial_board() {
-        let initial_board = starting_board();
+    fn detect_checkmate() {
         assert_eq!(
-            initial_board[7],
-            Some(Piece(Player::White, Character::Hook))
+            Some(Player::White),
+            checkmate(&make_board(
+                ["RHBQ BHR",
+                "PPPPPPPP",
+                "        ",
+                "        ",
+                "        ",
+                "        ",
+                "pppppppp",
+                "rhbkqbhr"]
+            ))
         );
     }
-}
 
-fn starting_board() -> Board {
-    [
-        Some(Piece(Player::White, Character::Hook)),
-        Some(Piece(Player::White, Character::Knight)),
-        Some(Piece(Player::White, Character::Bishop)),
-        Some(Piece(Player::White, Character::King)),
-        Some(Piece(Player::White, Character::Queen)),
-        Some(Piece(Player::White, Character::Bishop)),
-        Some(Piece(Player::White, Character::Knight)),
-        Some(Piece(Player::White, Character::Hook)),
-        Some(Piece(Player::White, Character::Pawn)),
-        Some(Piece(Player::White, Character::Pawn)),
-        Some(Piece(Player::White, Character::Pawn)),
-        Some(Piece(Player::White, Character::Pawn)),
-        Some(Piece(Player::White, Character::Pawn)),
-        Some(Piece(Player::White, Character::Pawn)),
-        Some(Piece(Player::White, Character::Pawn)),
-        Some(Piece(Player::White, Character::Pawn)),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(Piece(Player::Black, Character::Pawn)),
-        Some(Piece(Player::Black, Character::Pawn)),
-        Some(Piece(Player::Black, Character::Pawn)),
-        Some(Piece(Player::Black, Character::Pawn)),
-        Some(Piece(Player::Black, Character::Pawn)),
-        Some(Piece(Player::Black, Character::Pawn)),
-        Some(Piece(Player::Black, Character::Pawn)),
-        Some(Piece(Player::Black, Character::Pawn)),
-        Some(Piece(Player::Black, Character::Hook)),
-        Some(Piece(Player::Black, Character::Knight)),
-        Some(Piece(Player::Black, Character::Bishop)),
-        Some(Piece(Player::Black, Character::Queen)),
-        Some(Piece(Player::Black, Character::King)),
-        Some(Piece(Player::Black, Character::Bishop)),
-        Some(Piece(Player::Black, Character::Knight)),
-        Some(Piece(Player::Black, Character::Hook)),
-    ]
+    #[test]
+    fn play_checkmate() {
+        let mut board : Board = make_board(
+            [ "RHBQKBHR"
+            , "   q    "
+            , "        "
+            , "        "
+            , "        "
+            , "        "
+            , "        "
+            , "  k     "]
+        );
+
+        board = make_move(Player::White, &board, empty_history(), 0, true).unwrap().0;
+        assert_eq!(Some(Player::White), checkmate(&board));
+    }
 }
