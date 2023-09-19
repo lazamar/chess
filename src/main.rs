@@ -50,7 +50,7 @@ fn main() -> () {
 // -----------------
 
 #[derive(Debug, PartialEq, Copy, Clone, PartialOrd, Eq, Ord)]
-enum Character {
+pub enum Character {
     Rook,
     Knight,
     Bishop,
@@ -60,13 +60,13 @@ enum Character {
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, PartialOrd, Eq, Ord)]
-enum Player {
+pub enum Player {
     Black,
     White,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, PartialOrd, Eq, Ord)]
-struct Piece(Player, Character);
+pub struct Piece(Player, Character);
 
 type Board = [Option<Piece>; 64];
 
@@ -397,7 +397,7 @@ fn make_move_(
                 }
 
                 if is_last_iteration {
-                    rate(player, &candidate)
+                    rate::rate(player, &candidate)
                 } else {
                     make_move_(
                         next_player(player),
@@ -430,7 +430,7 @@ fn make_move_(
             }
 
             if is_last_iteration {
-                candidates.push((candidate, rate(player, &candidate)));
+                candidates.push((candidate, rate::rate(player, &candidate)));
             } else {
                 let rating = make_move_(
                     next_player(player),
@@ -685,106 +685,136 @@ fn knight_moves(pos: usize) -> Vec<u8> {
     )
 }
 
-// The rating represents how good the game looks for the white player.
-type Rating = i64;
+use rate::Rating;
+mod rate {
+    use super::*;
 
-fn rate(
-    _turn: Player, // player that just played
-    board: &Board,
-) -> Rating {
-    let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
-    let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
+    // The rating represents how good the game looks for the white player.
+    pub type Rating = i64;
 
-    let mut w_attack_n = 0;
-    let mut b_attack_n = 0;
-    let attack_multiplier = 3;
-    let defend_multiplier = 1;
-    let exists_multiplier = 4;
-    let mut w_exists = 0;
-    let mut b_exists = 0;
+    pub fn rate(
+        _turn: Player, // player that just played
+        board: &Board,
+    ) -> Rating {
+        piece_values(board)
+    }
 
-    let weight = |c| match c {
-        Character::Pawn => 1,
-        Character::Rook => 5,
-        Character::Knight => 3,
-        Character::Bishop => 3,
-        Character::Queen => 9,
-        Character::King => 100,
-    };
+    fn weight(c: Character) -> i64 {
+        match c {
+            Character::Pawn => 1,
+            Character::Rook => 5,
+            Character::Knight => 3,
+            Character::Bishop => 3,
+            Character::Queen => 9,
+            Character::King => 100,
+        }
+    }
 
-    //
-    let mut attack = |player: Player, pos: u8| {
-        match player {
-            Player::White => w_attack[pos as usize] = true,
-            Player::Black => b_attack[pos as usize] = true,
-        };
-    };
-    for (pos, piece) in board.iter().enumerate() {
-        let (player, moves) = match *piece {
-            None => continue,
-            Some(Piece(player, Character::Pawn)) => (player, pawn_moves(player, pos, board)),
-            Some(Piece(player, Character::Rook)) => (player, hook_moves(pos, board)),
-            Some(Piece(player, Character::Bishop)) => (player, bishop_moves(pos, board)),
-            Some(Piece(player, Character::Knight)) => (player, knight_moves(pos)),
-            Some(Piece(player, Character::Queen)) => (player, queen_moves(pos, board)),
-            Some(Piece(player, Character::King)) => (player, king_moves(pos)),
-        };
-        for target in moves.iter() {
-            let Piece(other, c) = match at(*target as u8, board) {
+    // Sum of weights of white pieces minus black ones.
+    fn piece_values(board: &Board) -> i64 {
+        let mut total = 0;
+        for piece in board {
+            match *piece {
                 None => continue,
-                Some(p) => p,
+                Some(Piece(Player::Black, c)) => total -= weight(c),
+                Some(Piece(Player::White, c)) => total += weight(c),
             };
-            if other != player {
-                attack(player, *target);
-                match player {
-                    Player::White => w_attack_n = attack_multiplier * weight(c),
-                    Player::Black => b_attack_n = attack_multiplier * weight(c),
-                }
-            }
         }
+        return total;
     }
 
-    let mut w_threatened = 0; // white pieces threatened
-    let mut w_defended = 0; // white pieces defended (threatened by a white piece)
-    let mut b_threatened = 0;
-    let mut b_defended = 0;
-    for (pos, piece) in board.iter().enumerate() {
-        match *piece {
-            None => {}
-            Some(Piece(Player::White, Character::King)) => {
-                if b_attack[pos] {
-                    w_threatened += weight(Character::King);
-                }
-            }
-            Some(Piece(Player::White, c)) => {
-                if b_attack[pos] {
-                    w_threatened += attack_multiplier * weight(c);
-                    if w_attack[pos] {
-                        w_defended += defend_multiplier * weight(c);
+    pub fn attack_opportunities(
+        _turn: Player, // player that just played
+        board: &Board,
+    ) -> Rating {
+        let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
+        let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
+
+        let attack_multiplier = 3;
+        let defend_multiplier = 1;
+        let exists_multiplier = 4;
+        let mut w_exists = 0;
+        let mut b_exists = 0;
+        let mut w_attack_n = 0;
+        let mut b_attack_n = 0;
+
+
+        //
+        let mut attack = |player: Player, pos: u8| {
+            match player {
+                Player::White => w_attack[pos as usize] = true,
+                Player::Black => b_attack[pos as usize] = true,
+            };
+        };
+        for (pos, piece) in board.iter().enumerate() {
+            let (player, moves) = match *piece {
+                None => continue,
+                Some(Piece(player, Character::Pawn)) => (player, pawn_moves(player, pos, board)),
+                Some(Piece(player, Character::Rook)) => (player, hook_moves(pos, board)),
+                Some(Piece(player, Character::Bishop)) => (player, bishop_moves(pos, board)),
+                Some(Piece(player, Character::Knight)) => (player, knight_moves(pos)),
+                Some(Piece(player, Character::Queen)) => (player, queen_moves(pos, board)),
+                Some(Piece(player, Character::King)) => (player, king_moves(pos)),
+            };
+            for target in moves.iter() {
+                let Piece(other, _) = match at(*target as u8, board) {
+                    None => continue,
+                    Some(p) => p,
+                };
+                if other != player {
+                    attack(player, *target);
+                    match player {
+                        Player::White => w_attack_n += 1,
+                        Player::Black => b_attack_n += 1
                     }
                 }
-                w_exists += weight(c) * exists_multiplier;
-            }
-            Some(Piece(Player::Black, Character::King)) => {
-                if w_attack[pos] {
-                    b_threatened += weight(Character::King);
-                }
-            }
-            Some(Piece(Player::Black, c)) => {
-                if w_attack[pos] {
-                    b_threatened += attack_multiplier * weight(c);
-                    if b_attack[pos] {
-                        b_defended += defend_multiplier * weight(c);
-                    }
-                }
-                b_exists += weight(c) * exists_multiplier;
             }
         }
+
+        let mut w_threatened = 0; // white pieces threatened
+        let mut w_defended = 0; // white pieces defended (threatened by a white piece)
+        let mut b_threatened = 0;
+        let mut b_defended = 0;
+        for (pos, piece) in board.iter().enumerate() {
+            match *piece {
+                None => {}
+                Some(Piece(Player::White, Character::King)) => {
+                    if b_attack[pos] {
+                        w_threatened += weight(Character::King);
+                    }
+                }
+                Some(Piece(Player::White, c)) => {
+                    if b_attack[pos] {
+                        w_threatened += attack_multiplier * weight(c);
+                        if w_attack[pos] {
+                            w_defended += defend_multiplier * weight(c);
+                        }
+                    }
+                    w_exists += weight(c) * exists_multiplier;
+                }
+                Some(Piece(Player::Black, Character::King)) => {
+                    if w_attack[pos] {
+                        b_threatened += weight(Character::King);
+                    }
+                }
+                Some(Piece(Player::Black, c)) => {
+                    if w_attack[pos] {
+                        b_threatened += attack_multiplier * weight(c);
+                        if b_attack[pos] {
+                            b_defended += defend_multiplier * weight(c);
+                        }
+                    }
+                    b_exists += weight(c) * exists_multiplier;
+                }
+            }
+        }
+        let white_vulnerable: i64 = w_threatened - w_defended;
+        let black_vulnerable: i64 = b_threatened - b_defended;
+        return black_vulnerable - white_vulnerable + w_exists - b_exists + w_attack_n - b_attack_n;
     }
-    let white_vulnerable: i64 = w_threatened - w_defended;
-    let black_vulnerable: i64 = b_threatened - b_defended;
-    return black_vulnerable - white_vulnerable + w_exists - b_exists;
+
 }
+
 
 fn next_row(pos: u8) -> Option<u8> {
     let n = pos + 8;
