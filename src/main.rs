@@ -153,9 +153,9 @@ fn interactive() -> String {
         }
 
         thread::sleep(Duration::from_millis(800));
-        match make_move(Player::Black, &board, &BTreeSet::new()) {
+        match make_move(Player::Black, &board, &BTreeSet::new(), 2) {
             None => return "Draw!".to_string(),
-            Some(b) => board = b,
+            Some((b,_)) => board = b,
         }
 
         println!("I played");
@@ -247,10 +247,6 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
     let mut history = BTreeSet::new();
     let mut board = starting_board();
     let mut turn = Player::White;
-    let next = |p| match p {
-        Player::White => Player::Black,
-        Player::Black => Player::White,
-    };
     println!("{}\n\n", PrettyBoard(board));
 
     let mut i = 0;
@@ -259,9 +255,9 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
             None => {}
             Some(millis) => thread::sleep(Duration::from_millis(millis)),
         };
-        match make_move(turn, &board, &history) {
+        match make_move(turn, &board, &history, 2) {
             None => return "Draw!".to_string(),
-            Some(b) => board = b,
+            Some((b, _)) => board = b,
         }
         if print {
             println!("{turn:?} played");
@@ -276,7 +272,14 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
             return "Reached max iterations".to_string();
         }
         history.insert(board);
-        turn = next(turn);
+        turn = next_player(turn);
+    }
+}
+
+fn next_player(player: Player) -> Player {
+    match player {
+        Player::White => Player::Black,
+        Player::Black => Player::White,
     }
 }
 
@@ -297,29 +300,53 @@ fn checkmate(board: &Board) -> Option<Player> {
     return None;
 }
 
-fn make_move(player: Player, board: &Board, history : &BTreeSet<Board>) -> Option<Board> {
+fn best_rating_for(player : Player) -> Rating {
+    match player {
+        Player::White => 1000,
+        Player::Black => -1000
+    }
+}
+
+fn make_move(
+    player: Player,
+    board: &Board,
+    history : &BTreeSet<Board>,
+    look_ahead : u8) -> Option<(Board, Rating)> {
     let mut best_board = None;
-    let mut best_rating = 0;
-    let mut all_ratings = Vec::new();
     for candidate in player_moves(player, &board) {
         if history.contains(&candidate) { continue }
+
         if checkmate(&candidate).is_some() {
-            return Some(candidate);
+            return Some((candidate, best_rating_for(player)));
         }
-        let rating = rate(player, &candidate);
-        all_ratings .push(rating);
-        let better = match player {
-            Player::White => rating > best_rating,
-            Player::Black => rating < best_rating,
+        let rating = if look_ahead == 0 {
+            rate(player, &candidate)
+        } else {
+            match make_move(next_player(player), &candidate, history, look_ahead - 1) {
+                Some((_, r)) => r,
+                None => rate(player, &candidate)
+            }
         };
-        if better || best_rating == 0 {
-            best_board = Some(candidate);
-            best_rating = rating;
+
+        best_board = match best_board {
+            None => Some((candidate, rating)),
+            Some((_, best_rating)) => {
+                let better = if look_ahead % 2 == 0 {
+                    match player {
+                        Player::White => rating > best_rating,
+                        Player::Black => rating < best_rating,
+                    }
+                } else {
+                    match player {
+                        Player::White => rating < best_rating,
+                        Player::Black => rating > best_rating,
+                    }
+                };
+                if better { Some((candidate, rating)) } else { best_board }
+            }
         }
     }
 
-    println!("All ratings :{all_ratings:?}");
-    println!("Rating of :{}", best_rating);
     return best_board;
 }
 
