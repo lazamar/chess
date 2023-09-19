@@ -255,7 +255,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
             None => {}
             Some(millis) => thread::sleep(Duration::from_millis(millis)),
         };
-        match make_move(turn, &board, &history, 2) {
+        match make_move(turn, &board, &history, 3) {
             None => return "Draw!".to_string(),
             Some((b, _)) => board = b,
         }
@@ -324,23 +324,16 @@ fn make_move(
         } else {
             match make_move(next_player(player), &candidate, history, look_ahead - 1) {
                 Some((_, r)) => r,
-                None => rate(player, &candidate)
+                None => panic!("Oh no")
             }
         };
 
         best_board = match best_board {
             None => Some((candidate, rating)),
             Some((_, best_rating)) => {
-                let better = if look_ahead % 2 == 0 {
-                    match player {
-                        Player::White => rating > best_rating,
-                        Player::Black => rating < best_rating,
-                    }
-                } else {
-                    match player {
-                        Player::White => rating < best_rating,
-                        Player::Black => rating > best_rating,
-                    }
+                let better = match player {
+                    Player::White => rating > best_rating,
+                    Player::Black => rating < best_rating,
                 };
                 if better { Some((candidate, rating)) } else { best_board }
             }
@@ -567,7 +560,9 @@ fn knight_moves(pos: usize) -> Vec<u8> {
 // The rating represents how good the game looks for the white player.
 type Rating = i64;
 
-fn rate(turn: Player, board: &Board) -> Rating {
+fn rate(
+    turn: Player, // player that just played
+    board: &Board) -> Rating {
     let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
     let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
 
@@ -604,48 +599,55 @@ fn rate(turn: Player, board: &Board) -> Rating {
     let mut b_defended = 0;
     let weight = |c| match c {
         Character::Pawn => 1,
-        Character::Hook => 2,
-        Character::Knight => 2,
-        Character::Bishop => 2,
-        Character::Queen => 10,
+        Character::Hook => 5,
+        Character::Knight => 3,
+        Character::Bishop => 3,
+        Character::Queen => 9,
         Character::King => 100,
     };
+
+    let attack_multiplier = 1;
+    let defend_multiplier = 0;
+    let exists_multiplier = 1;
+    let mut w_count = 0;
+    let mut b_count = 0;
+
     for (pos, piece) in board.iter().enumerate() {
         match *piece {
             None => {}
             Some(Piece(Player::White, Character::King)) => {
                 if b_attack[pos] {
-                    let multiplier = if turn == Player::White { 2 } else { 1 };
-                    w_threatened += multiplier * weight(Character::King);
+                    w_threatened += weight(Character::King);
                 }
             },
             Some(Piece(Player::White, c)) => {
                 if b_attack[pos] {
-                    w_threatened += weight(c);
+                    w_threatened += (attack_multiplier + if turn == Player::White { 1 } else { 0 }) * weight(c);
                 }
                 if w_attack[pos] {
-                    w_defended += weight(c);
+                    w_defended += defend_multiplier * weight(c);
                 }
+                w_count += weight(c) * exists_multiplier;
             }
             Some(Piece(Player::Black, Character::King)) => {
                 if w_attack[pos] {
-                    let multiplier = if turn == Player::Black { 2 } else { 1 };
-                    b_threatened += multiplier * weight(Character::King);
+                    b_threatened += weight(Character::King);
                 }
             },
             Some(Piece(Player::Black, c)) => {
                 if w_attack[pos] {
-                    b_threatened += weight(c);
+                    b_threatened += (attack_multiplier + if turn == Player::Black { 1 } else { 0 }) * weight(c);
                 }
                 if b_attack[pos] {
-                    b_defended += weight(c);
+                    b_defended += defend_multiplier * weight(c);
                 }
+                b_count += weight(c) * exists_multiplier;
             }
         }
     }
     let white_vulnerable: i64 = w_threatened - w_defended;
     let black_vulnerable: i64 = b_threatened - b_defended;
-    return black_vulnerable - white_vulnerable;
+    return black_vulnerable - white_vulnerable + w_count - b_count;
 }
 
 fn next_row(pos: u8) -> Option<u8> {
