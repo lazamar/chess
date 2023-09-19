@@ -1,12 +1,12 @@
 use clap::Parser;
 use core::fmt::Debug;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::io;
-use std::time::Duration;
-use std::collections::BTreeSet;
-use std::thread;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 /// Play a game of chess
 #[derive(Parser, Debug)]
@@ -159,7 +159,7 @@ fn interactive() -> String {
         let history = Arc::new(Mutex::new(BTreeSet::<Board>::new()));
         match make_move(Player::Black, &board, history, 3, true) {
             None => return "Draw!".to_string(),
-            Some((b,_)) => board = b,
+            Some((b, _)) => board = b,
         }
 
         println!("I played");
@@ -170,7 +170,7 @@ fn interactive() -> String {
     }
 }
 
-fn read_user_move(board : &Board) -> (u8, u8) {
+fn read_user_move(board: &Board) -> (u8, u8) {
     loop {
         println!("Type the coordinates you want to move from: ");
         let from = read_pos();
@@ -179,12 +179,12 @@ fn read_user_move(board : &Board) -> (u8, u8) {
             None => {
                 println!("This cell is empty. Choose one with a white piece.");
                 continue;
-            },
-            Some(Piece(Player::Black,_)) => {
+            }
+            Some(Piece(Player::Black, _)) => {
                 println!("This cell has a black piece. You are playing with the whites.");
                 continue;
-            },
-            Some(Piece(Player::White,c)) => c
+            }
+            Some(Piece(Player::White, c)) => c,
         };
 
         println!("Type the coordinates you want to move to: ");
@@ -198,9 +198,9 @@ fn read_user_move(board : &Board) -> (u8, u8) {
         }
 
         match at(to, board) {
-            None => {},
-            Some(Piece(Player::Black,_)) => {},
-            Some(Piece(Player::White,_)) => {
+            None => {}
+            Some(Piece(Player::Black, _)) => {}
+            Some(Piece(Player::White, _)) => {
                 println!("You can't take a white piece. Try again.");
                 continue;
             }
@@ -306,35 +306,45 @@ fn checkmate(board: &Board) -> Option<Player> {
     return None;
 }
 
-fn best_rating_for(player : Player) -> Rating {
+fn best_rating_for(player: Player) -> Rating {
     match player {
         Player::White => 1000,
-        Player::Black => -1000
+        Player::Black => -1000,
     }
 }
 
 fn make_move(
     player: Player,
     board: &Board,
-    history : History,
-    look_ahead : u8,
-    top_level: bool) -> Option<(Board, Rating)> {
+    history: History,
+    look_ahead: u8,
+    top_level: bool,
+) -> Option<(Board, Rating)> {
     let mut candidates = Vec::new();
     if top_level {
         let mut handles = Vec::new();
         for candidate in player_moves(player, &board) {
             let hist = history.lock().unwrap();
             let history = history.clone();
-            if hist.contains(&candidate) { continue }
+            if hist.contains(&candidate) {
+                continue;
+            }
             let handle = thread::spawn(move || -> (Board, Rating) {
                 if checkmate(&candidate).is_some() {
-                    return (candidate, best_rating_for(player))
+                    return (candidate, best_rating_for(player));
                 }
 
                 if look_ahead == 0 {
                     (candidate, rate(player, &candidate))
                 } else {
-                    make_move(next_player(player), &candidate, history.clone(), look_ahead - 1, false).unwrap()
+                    make_move(
+                        next_player(player),
+                        &candidate,
+                        history.clone(),
+                        look_ahead - 1,
+                        false,
+                    )
+                    .unwrap()
                 }
             });
             handles.push(handle);
@@ -347,7 +357,9 @@ fn make_move(
         for candidate in player_moves(player, &board) {
             {
                 let hist = history.lock().unwrap();
-                if hist.contains(&candidate) { continue }
+                if hist.contains(&candidate) {
+                    continue;
+                }
             }
             if checkmate(&candidate).is_some() {
                 candidates.push((candidate, best_rating_for(player)));
@@ -357,9 +369,15 @@ fn make_move(
             if look_ahead == 0 {
                 candidates.push((candidate, rate(player, &candidate)));
             } else {
-                match make_move(next_player(player), &candidate, history.clone(), look_ahead - 1, false) {
+                match make_move(
+                    next_player(player),
+                    &candidate,
+                    history.clone(),
+                    look_ahead - 1,
+                    false,
+                ) {
                     Some((_, r)) => candidates.push((candidate, r)),
-                    None => panic!("Oh no")
+                    None => panic!("Oh no"),
                 }
             }
         }
@@ -376,7 +394,11 @@ fn make_move(
                     Player::White => rating > best_rating,
                     Player::Black => rating < best_rating,
                 };
-                if better { Some((candidate, rating)) } else { best_board }
+                if better {
+                    Some((candidate, rating))
+                } else {
+                    best_board
+                }
             }
         }
     }
@@ -445,30 +467,35 @@ fn pawn_moves(player: Player, pos: usize, board: &Board) -> Vec<u8> {
     let mut moves: Vec<u8> = Vec::new();
     let pos = pos as u8;
 
+    let is_empty = |p| !at(p, board).is_some();
+
     // move forward
     let fwd_candidates = match player {
         Player::Black => {
             if row_number(pos) == 6 {
-                vec!(prev_row(pos), prev_row(pos).and_then(prev_row))
+                vec![
+                    prev_row(pos),
+                    prev_row(pos).filter(|p| is_empty(*p)).and_then(prev_row),
+                ]
             } else {
-                vec!(prev_row(pos))
+                vec![prev_row(pos)]
             }
-        },
+        }
         Player::White => {
             if row_number(pos) == 1 {
-                vec!(next_row(pos), next_row(pos).and_then(next_row))
+                vec![
+                    next_row(pos),
+                    next_row(pos).filter(|p| is_empty(*p)).and_then(next_row),
+                ]
             } else {
-                vec!(next_row(pos))
+                vec![next_row(pos)]
             }
         }
     };
-    let fwd_moves = fwd_candidates
-        .iter()
-        .flatten()
-        .filter(|pos_| {
-            let occupied = at(**pos_, board).is_some();
-            !occupied
-        });
+    let fwd_moves = fwd_candidates.iter().flatten().filter(|pos_| {
+        let occupied = at(**pos_, board).is_some();
+        !occupied
+    });
     for m in fwd_moves {
         moves.push(*m);
     }
@@ -602,7 +629,8 @@ type Rating = i64;
 
 fn rate(
     _turn: Player, // player that just played
-    board: &Board) -> Rating {
+    board: &Board,
+) -> Rating {
     let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
     let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
 
@@ -634,7 +662,7 @@ fn rate(
     }
 
     let mut w_threatened = 0; // white pieces threatened
-    let mut w_defended = 0;   // white pieces defended (threatened by a white piece)
+    let mut w_defended = 0; // white pieces defended (threatened by a white piece)
     let mut b_threatened = 0;
     let mut b_defended = 0;
     let weight = |c| match c {
@@ -659,7 +687,7 @@ fn rate(
                 if b_attack[pos] {
                     w_threatened += weight(Character::King);
                 }
-            },
+            }
             Some(Piece(Player::White, c)) => {
                 if b_attack[pos] {
                     w_threatened += attack_multiplier * weight(c);
@@ -673,7 +701,7 @@ fn rate(
                 if w_attack[pos] {
                     b_threatened += weight(Character::King);
                 }
-            },
+            }
             Some(Piece(Player::Black, c)) => {
                 if w_attack[pos] {
                     b_threatened += attack_multiplier * weight(c);
