@@ -31,7 +31,7 @@ struct CliOptions {
 
 fn main() -> () {
     let cli = CliOptions::parse();
-    let delay = if cli.slow { Some(500) } else { None };
+    let delay = if cli.slow { Some(700) } else { None };
 
     if cli.interactive {
         println!("{}", interactive());
@@ -334,10 +334,7 @@ fn make_move(
                 if look_ahead == 0 {
                     (candidate, rate(player, &candidate))
                 } else {
-                    match make_move(next_player(player), &candidate, history.clone(), look_ahead - 1, false) {
-                        Some((_, r)) => (candidate, r),
-                        None => panic!("Oh no")
-                    }
+                    make_move(next_player(player), &candidate, history.clone(), look_ahead - 1, false).unwrap()
                 }
             });
             handles.push(handle);
@@ -369,7 +366,9 @@ fn make_move(
     }
 
     let mut best_board = None;
+    let mut all_scores = Vec::new();
     for (candidate, rating) in candidates {
+        all_scores.push(rating);
         best_board = match best_board {
             None => Some((candidate, rating)),
             Some((_, best_rating)) => {
@@ -381,7 +380,6 @@ fn make_move(
             }
         }
     }
-
     return best_board;
 }
 
@@ -603,7 +601,7 @@ fn knight_moves(pos: usize) -> Vec<u8> {
 type Rating = i64;
 
 fn rate(
-    turn: Player, // player that just played
+    _turn: Player, // player that just played
     board: &Board) -> Rating {
     let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
     let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
@@ -648,7 +646,7 @@ fn rate(
         Character::King => 100,
     };
 
-    let attack_multiplier = 3;
+    let attack_multiplier = 2;
     let defend_multiplier = 1;
     let exists_multiplier = 4;
     let mut w_count = 0;
@@ -665,9 +663,9 @@ fn rate(
             Some(Piece(Player::White, c)) => {
                 if b_attack[pos] {
                     w_threatened += attack_multiplier * weight(c);
-                }
-                if w_attack[pos] {
-                    w_defended += defend_multiplier * weight(c);
+                    if w_attack[pos] {
+                        w_defended += defend_multiplier * weight(c);
+                    }
                 }
                 w_count += weight(c) * exists_multiplier;
             }
@@ -679,9 +677,9 @@ fn rate(
             Some(Piece(Player::Black, c)) => {
                 if w_attack[pos] {
                     b_threatened += attack_multiplier * weight(c);
-                }
-                if b_attack[pos] {
-                    b_defended += defend_multiplier * weight(c);
+                    if b_attack[pos] {
+                        b_defended += defend_multiplier * weight(c);
+                    }
                 }
                 b_count += weight(c) * exists_multiplier;
             }
