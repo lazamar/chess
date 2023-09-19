@@ -160,7 +160,7 @@ fn interactive() -> String {
 
         thread::sleep(Duration::from_millis(800));
         let history = empty_history();
-        match make_move(Player::Black, &board, history, 3, true) {
+        match make_move(Player::Black, &board, history, LookAhead(3)) {
             None => return "Draw!".to_string(),
             Some((b, _)) => board = b,
         }
@@ -253,6 +253,10 @@ fn read_pos() -> u8 {
 
 type History = Arc<Mutex<BTreeSet<Board>>>;
 
+fn empty_history() -> History {
+    Arc::new(Mutex::new(BTreeSet::<Board>::new()))
+}
+
 fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
     let history = Arc::new(Mutex::new(BTreeSet::new()));
     let mut board = starting_board();
@@ -262,7 +266,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
     let mut i = 0;
     loop {
         let before = SystemTime::now();
-        match make_move(turn, &board, history.clone(), 3, true) {
+        match make_move(turn, &board, history.clone(), LookAhead(3)) {
             None => return "Draw!".to_string(),
             Some((b, _)) => board = b,
         }
@@ -327,14 +331,26 @@ fn best_rating_for(player: Player) -> Rating {
     }
 }
 
+struct LookAhead(u8);
+
 fn make_move(
     player: Player,
     board: &Board,
     history: History,
-    look_ahead: u8,
+    look_ahead: LookAhead,
+) -> Option<(Board, Rating)> {
+    make_move_(player, board, history, look_ahead, true)
+}
+
+fn make_move_(
+    player: Player,
+    board: &Board,
+    history: History,
+    look_ahead: LookAhead,
     top_level: bool,
 ) -> Option<(Board, Rating)> {
     let mut candidates = Vec::new();
+    let is_last_iteration = look_ahead.0 == 0;
     if top_level {
         let mut handles = Vec::new();
         for candidate in player_moves(player, &board) {
@@ -350,14 +366,14 @@ fn make_move(
                     return best_rating_for(player);
                 }
 
-                if look_ahead == 0 {
+                if is_last_iteration {
                     rate(player, &candidate)
                 } else {
-                    make_move(
+                    make_move_(
                         next_player(player),
                         &candidate,
                         history,
-                        look_ahead - 1,
+                        LookAhead(look_ahead.0 - 1),
                         false,
                     )
                     .unwrap()
@@ -383,19 +399,17 @@ fn make_move(
                 continue;
             }
 
-            if look_ahead == 0 {
+            if is_last_iteration {
                 candidates.push((candidate, rate(player, &candidate)));
             } else {
-                match make_move(
+                let rating = make_move_(
                     next_player(player),
                     &candidate,
                     history.clone(),
-                    look_ahead - 1,
+                    LookAhead(look_ahead.0 - 1),
                     false,
-                ) {
-                    Some((_, r)) => candidates.push((candidate, r)),
-                    None => panic!("Oh no"),
-                }
+                ).unwrap().1;
+                candidates.push((candidate, rating));
             }
         }
     }
@@ -822,10 +836,6 @@ fn make_board(mut chars: [&str; 8]) -> Board {
     return board;
 }
 
-fn empty_history() -> History {
-    Arc::new(Mutex::new(BTreeSet::<Board>::new()))
-}
-
 #[rustfmt::skip]
 #[cfg(test)]
 mod chess_tests {
@@ -833,24 +843,21 @@ mod chess_tests {
 
     #[test]
     fn detect_checkmate() {
-        assert_eq!(
-            Some(Player::White),
-            checkmate(&make_board(
-                ["RHBQ BHR",
-                "PPPPPPPP",
-                "        ",
-                "        ",
-                "        ",
-                "        ",
-                "pppppppp",
-                "rhbkqbhr"]
-            ))
-        );
+        let board = make_board(
+            [ "RHBQ BHR"
+            , "PPPPPPPP"
+            , "        "
+            , "        "
+            , "        "
+            , "        "
+            , "pppppppp"
+            , "rhbkqbhr"]);
+        assert_eq!(Some(Player::White), checkmate(&board));
     }
 
     #[test]
     fn play_checkmate() {
-        let mut board : Board = make_board(
+        let mut board = make_board(
             [ "RHBQKBHR"
             , "   q    "
             , "        "
@@ -858,10 +865,9 @@ mod chess_tests {
             , "        "
             , "        "
             , "        "
-            , "  k     "]
-        );
+            , "  k     "]);
 
-        board = make_move(Player::White, &board, empty_history(), 0, true).unwrap().0;
+        board = make_move(Player::White, &board, empty_history(), LookAhead(0)).unwrap().0;
         assert_eq!(Some(Player::White), checkmate(&board));
     }
 }
