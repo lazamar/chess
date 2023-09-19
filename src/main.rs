@@ -2,8 +2,11 @@ use clap::Parser;
 use core::fmt::Debug;
 use std::fmt;
 use std::io;
-use std::{thread, time::Duration};
+use std::time::Duration;
 use std::collections::BTreeSet;
+use std::thread;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Play a game of chess
 #[derive(Parser, Debug)]
@@ -153,7 +156,8 @@ fn interactive() -> String {
         }
 
         thread::sleep(Duration::from_millis(800));
-        match make_move(Player::Black, &board, &BTreeSet::new(), 2) {
+        let history = Arc::new(Mutex::new(BTreeSet::<Board>::new()));
+        match make_move(Player::Black, &board, history, 3, true) {
             None => return "Draw!".to_string(),
             Some((b,_)) => board = b,
         }
@@ -243,8 +247,10 @@ fn read_pos() -> u8 {
     }
 }
 
+type History = Arc<Mutex<BTreeSet<Board>>>;
+
 fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
-    let mut history = BTreeSet::new();
+    let history = Arc::new(Mutex::new(BTreeSet::new()));
     let mut board = starting_board();
     let mut turn = Player::White;
     println!("{}\n\n", PrettyBoard(board));
@@ -255,7 +261,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
             None => {}
             Some(millis) => thread::sleep(Duration::from_millis(millis)),
         };
-        match make_move(turn, &board, &history, 3) {
+        match make_move(turn, &board, history.clone(), 3, true) {
             None => return "Draw!".to_string(),
             Some((b, _)) => board = b,
         }
@@ -271,7 +277,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize) -> String {
         if i >= max_rounds {
             return "Reached max iterations".to_string();
         }
-        history.insert(board);
+        history.lock().unwrap().insert(board);
         turn = next_player(turn);
     }
 }
@@ -310,24 +316,60 @@ fn best_rating_for(player : Player) -> Rating {
 fn make_move(
     player: Player,
     board: &Board,
-    history : &BTreeSet<Board>,
-    look_ahead : u8) -> Option<(Board, Rating)> {
-    let mut best_board = None;
-    for candidate in player_moves(player, &board) {
-        if history.contains(&candidate) { continue }
+    history : History,
+    look_ahead : u8,
+    top_level: bool) -> Option<(Board, Rating)> {
+    let mut candidates = Vec::new();
+    if top_level {
+        let mut handles = Vec::new();
+        for candidate in player_moves(player, &board) {
+            let hist = history.lock().unwrap();
+            let history = history.clone();
+            if hist.contains(&candidate) { continue }
+            let handle = thread::spawn(move || -> (Board, Rating) {
+                if checkmate(&candidate).is_some() {
+                    return (candidate, best_rating_for(player))
+                }
 
-        if checkmate(&candidate).is_some() {
-            return Some((candidate, best_rating_for(player)));
+                if look_ahead == 0 {
+                    (candidate, rate(player, &candidate))
+                } else {
+                    match make_move(next_player(player), &candidate, history.clone(), look_ahead - 1, false) {
+                        Some((_, r)) => (candidate, r),
+                        None => panic!("Oh no")
+                    }
+                }
+            });
+            handles.push(handle);
         }
-        let rating = if look_ahead == 0 {
-            rate(player, &candidate)
-        } else {
-            match make_move(next_player(player), &candidate, history, look_ahead - 1) {
-                Some((_, r)) => r,
-                None => panic!("Oh no")
-            }
-        };
 
+        for handle in handles.into_iter() {
+            candidates.push(handle.join().unwrap());
+        }
+    } else {
+        for candidate in player_moves(player, &board) {
+            {
+                let hist = history.lock().unwrap();
+                if hist.contains(&candidate) { continue }
+            }
+            if checkmate(&candidate).is_some() {
+                candidates.push((candidate, best_rating_for(player)));
+                continue;
+            }
+
+            if look_ahead == 0 {
+                candidates.push((candidate, rate(player, &candidate)));
+            } else {
+                match make_move(next_player(player), &candidate, history.clone(), look_ahead - 1, false) {
+                    Some((_, r)) => candidates.push((candidate, r)),
+                    None => panic!("Oh no")
+                }
+            }
+        }
+    }
+
+    let mut best_board = None;
+    for (candidate, rating) in candidates {
         best_board = match best_board {
             None => Some((candidate, rating)),
             Some((_, best_rating)) => {
@@ -606,9 +648,9 @@ fn rate(
         Character::King => 100,
     };
 
-    let attack_multiplier = 1;
-    let defend_multiplier = 0;
-    let exists_multiplier = 1;
+    let attack_multiplier = 3;
+    let defend_multiplier = 1;
+    let exists_multiplier = 4;
     let mut w_count = 0;
     let mut b_count = 0;
 
@@ -622,7 +664,7 @@ fn rate(
             },
             Some(Piece(Player::White, c)) => {
                 if b_attack[pos] {
-                    w_threatened += (attack_multiplier + if turn == Player::White { 1 } else { 0 }) * weight(c);
+                    w_threatened += attack_multiplier * weight(c);
                 }
                 if w_attack[pos] {
                     w_defended += defend_multiplier * weight(c);
@@ -636,7 +678,7 @@ fn rate(
             },
             Some(Piece(Player::Black, c)) => {
                 if w_attack[pos] {
-                    b_threatened += (attack_multiplier + if turn == Player::Black { 1 } else { 0 }) * weight(c);
+                    b_threatened += attack_multiplier * weight(c);
                 }
                 if b_attack[pos] {
                     b_defended += defend_multiplier * weight(c);
