@@ -638,7 +638,7 @@ fn knight_moves(pos: usize) -> Vec<u8> {
 }
 
 // The rating represents how good the game looks for the white player.
-type Rating = (i64, u8);
+type Rating = i64;
 
 fn rate(
     _turn: Player, // player that just played
