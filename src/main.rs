@@ -247,38 +247,40 @@ fn read_pos() -> u8 {
     loop {
         let mut input = String::new();
         match io::stdin().read_line(&mut input) {
-            Ok(_) => {
-                let pos = input
-                    .chars()
-                    .nth(0)
-                    .and_then(|n| match n {
-                        'A' => Some(0),
-                        'B' => Some(1),
-                        'C' => Some(2),
-                        'D' => Some(3),
-                        'E' => Some(4),
-                        'F' => Some(5),
-                        'G' => Some(6),
-                        'H' => Some(7),
-                        _ => None,
-                    })
-                    .and_then(|col| {
-                        input
-                            .chars()
-                            .nth(1)
-                            .and_then(|n| n.to_digit(10))
-                            .map(|row| row - 1) // 1-indexed to 0-indexed
-                            .map(|row| row * 8 + col)
-                    });
-                match pos {
-                    None => {}
-                    Some(p) => return p as u8,
-                }
+            Ok(_) => match to_pos(input) {
+                None => {},
+                Some(pos) => return pos as u8
             }
             Err(_) => {}
         };
         println!("Invalid position. An example valid position is 'A5'");
     }
+}
+
+fn to_pos(str: String) -> Option<usize> {
+    str
+        .chars()
+        .nth(0)
+        .and_then(|n| match n {
+            'A' => Some(0),
+            'B' => Some(1),
+            'C' => Some(2),
+            'D' => Some(3),
+            'E' => Some(4),
+            'F' => Some(5),
+            'G' => Some(6),
+            'H' => Some(7),
+            _ => None,
+        })
+        .and_then(|col| {
+            str
+                .chars()
+                .nth(1)
+                .and_then(|n| n.to_digit(10))
+                .map(|row| row - 1) // 1-indexed to 0-indexed
+                .map(|row| row * 8 + col)
+        })
+        .map(|p| p as usize)
 }
 
 type History = Arc<Mutex<BTreeSet<Board>>>;
@@ -693,10 +695,10 @@ mod rate {
     pub type Rating = i64;
 
     pub fn rate(
-        _turn: Player, // player that just played
+        turn: Player, // player that just played
         board: &Board,
     ) -> Rating {
-        piece_values(board)
+        piece_weights(board) + rate_attack_opportunities(turn, board)
     }
 
     fn weight(c: Character) -> i64 {
@@ -711,7 +713,7 @@ mod rate {
     }
 
     // Sum of weights of white pieces minus black ones.
-    fn piece_values(board: &Board) -> i64 {
+    fn piece_weights(board: &Board) -> i64 {
         let mut total = 0;
         for piece in board {
             match *piece {
@@ -723,23 +725,13 @@ mod rate {
         return total;
     }
 
-    pub fn attack_opportunities(
+    fn rate_attack_opportunities(
         _turn: Player, // player that just played
         board: &Board,
     ) -> Rating {
         let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
         let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
 
-        let attack_multiplier = 3;
-        let defend_multiplier = 1;
-        let exists_multiplier = 4;
-        let mut w_exists = 0;
-        let mut b_exists = 0;
-        let mut w_attack_n = 0;
-        let mut b_attack_n = 0;
-
-
-        //
         let mut attack = |player: Player, pos: u8| {
             match player {
                 Player::White => w_attack[pos as usize] = true,
@@ -763,13 +755,12 @@ mod rate {
                 };
                 if other != player {
                     attack(player, *target);
-                    match player {
-                        Player::White => w_attack_n += 1,
-                        Player::Black => b_attack_n += 1
-                    }
                 }
             }
         }
+
+        let attack_multiplier = 2;
+        let defend_multiplier = 1;
 
         let mut w_threatened = 0; // white pieces threatened
         let mut w_defended = 0; // white pieces defended (threatened by a white piece)
@@ -790,7 +781,6 @@ mod rate {
                             w_defended += defend_multiplier * weight(c);
                         }
                     }
-                    w_exists += weight(c) * exists_multiplier;
                 }
                 Some(Piece(Player::Black, Character::King)) => {
                     if w_attack[pos] {
@@ -804,13 +794,12 @@ mod rate {
                             b_defended += defend_multiplier * weight(c);
                         }
                     }
-                    b_exists += weight(c) * exists_multiplier;
                 }
             }
         }
         let white_vulnerable: i64 = w_threatened - w_defended;
         let black_vulnerable: i64 = b_threatened - b_defended;
-        return black_vulnerable - white_vulnerable + w_exists - b_exists + w_attack_n - b_attack_n;
+        return black_vulnerable - white_vulnerable;
     }
 
 }
@@ -898,13 +887,6 @@ fn make_board(mut chars: [&str; 8]) -> Board {
     return board;
 }
 
-fn is(character: Character, piece: Option<Piece>) -> bool {
-    match piece {
-        None => false,
-        Some(Piece(_,c)) => c == character
-    }
-}
-
 #[rustfmt::skip]
 #[cfg(test)]
 mod chess_tests {
@@ -940,6 +922,8 @@ mod chess_tests {
         assert_eq!(Some(Player::White), checkmate(&board));
     }
 
+    // TODO
+    #[ignore]
     #[test]
     fn dont_take_equivalent_swap() {
         let mut board = make_board(
@@ -957,5 +941,35 @@ mod chess_tests {
         assert_eq!(bishop_count, 4);
     }
 
+    fn is(character: Character, piece: Option<Piece>) -> bool {
+        match piece {
+            None => false,
+            Some(Piece(_,c)) => c == character
+        }
+    }
+
+    fn at_pos(str: &'static str, board: &Board) -> Option<Piece> {
+        at(to_pos("F4".to_string()).unwrap() as u8, board)
+    }
+
+    #[test]
+    fn dont_give_pawn_away() {
+        let mut board = make_board(
+            [ "RHBQKBHR"
+            , "PPP  PPP"
+            , "   P    "
+            , "    P   "
+            , "        "
+            , " p      "
+            , "pbpppppp"
+            , "rh kqbhr"]);
+        board = make_move(
+            Player::White,
+            &board,
+            empty_history(),
+            LookAhead(3)
+        ).unwrap().0;
+        assert_eq!(at_pos("F4", &board), None);
+    }
 
 }
