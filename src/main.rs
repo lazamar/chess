@@ -115,7 +115,7 @@ impl fmt::Display for Position {
 
 impl fmt::Display for PrettyBoard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let PrettyBoard{board,debug} = *self;
+        let PrettyBoard { board, debug } = *self;
         let black = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[40m{p}\x1b[0m");
         let white = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[107m{p}\x1b[0m");
         let at = |i: usize| Position(board[i as usize]);
@@ -134,21 +134,21 @@ impl fmt::Display for PrettyBoard {
 
             if debug {
                 write!(f, " \"")?;
-                for i in from..(from+8) {
+                for i in from..(from + 8) {
                     let char = match at(i).0 {
-                         None                                             => ' ',
-                         Some(Piece(Player::White, Character::Rook))      => 'r' ,
-                         Some(Piece(Player::White, Character::Knight))    => 'h' ,
-                         Some(Piece(Player::White, Character::Bishop))    => 'b' ,
-                         Some(Piece(Player::White, Character::Queen))     => 'q' ,
-                         Some(Piece(Player::White, Character::King))      => 'k' ,
-                         Some(Piece(Player::White, Character::Pawn))      => 'p' ,
-                         Some(Piece(Player::Black, Character::Rook))      => 'R' ,
-                         Some(Piece(Player::Black, Character::Knight))    => 'H' ,
-                         Some(Piece(Player::Black, Character::Bishop))    => 'B' ,
-                         Some(Piece(Player::Black, Character::Queen))     => 'Q' ,
-                         Some(Piece(Player::Black, Character::King))      => 'K' ,
-                         Some(Piece(Player::Black, Character::Pawn))      => 'P'
+                        None => ' ',
+                        Some(Piece(Player::White, Character::Rook)) => 'r',
+                        Some(Piece(Player::White, Character::Knight)) => 'h',
+                        Some(Piece(Player::White, Character::Bishop)) => 'b',
+                        Some(Piece(Player::White, Character::Queen)) => 'q',
+                        Some(Piece(Player::White, Character::King)) => 'k',
+                        Some(Piece(Player::White, Character::Pawn)) => 'p',
+                        Some(Piece(Player::Black, Character::Rook)) => 'R',
+                        Some(Piece(Player::Black, Character::Knight)) => 'H',
+                        Some(Piece(Player::Black, Character::Bishop)) => 'B',
+                        Some(Piece(Player::Black, Character::Queen)) => 'Q',
+                        Some(Piece(Player::Black, Character::King)) => 'K',
+                        Some(Piece(Player::Black, Character::Pawn)) => 'P',
                     };
                     write!(f, "{}", char)?;
                 }
@@ -175,7 +175,13 @@ impl fmt::Display for PrettyBoard {
 fn interactive() -> String {
     let mut board = starting_board();
     println!("You are the white player. You begin.");
-    println!("{}\n\n", PrettyBoard{board, debug : false});
+    println!(
+        "{}\n\n",
+        PrettyBoard {
+            board,
+            debug: false
+        }
+    );
 
     loop {
         let (from, to) = read_user_move(&board);
@@ -183,7 +189,13 @@ fn interactive() -> String {
         board[from as usize] = None;
 
         println!("You played");
-        println!("{}\n\n", PrettyBoard{board, debug : false});
+        println!(
+            "{}\n\n",
+            PrettyBoard {
+                board,
+                debug: false
+            }
+        );
         if checkmate(&board).is_some() {
             return "You win!".to_string();
         }
@@ -192,11 +204,17 @@ fn interactive() -> String {
         let history = empty_history();
         match make_move(Player::Black, &board, history, LookAhead(3)) {
             None => return "Draw!".to_string(),
-            Some((b, _)) => board = b,
+            Some((b, _)) => board = *b,
         }
 
         println!("I played");
-        println!("{}\n\n", PrettyBoard{board, debug: false});
+        println!(
+            "{}\n\n",
+            PrettyBoard {
+                board,
+                debug: false
+            }
+        );
         if checkmate(&board).is_some() {
             return "You lose!".to_string();
         }
@@ -248,9 +266,9 @@ fn read_pos() -> u8 {
         let mut input = String::new();
         match io::stdin().read_line(&mut input) {
             Ok(_) => match to_pos(input) {
-                None => {},
-                Some(pos) => return pos as u8
-            }
+                None => {}
+                Some(pos) => return pos as u8,
+            },
             Err(_) => {}
         };
         println!("Invalid position. An example valid position is 'A5'");
@@ -258,8 +276,7 @@ fn read_pos() -> u8 {
 }
 
 fn to_pos(str: String) -> Option<usize> {
-    str
-        .chars()
+    str.chars()
         .nth(0)
         .and_then(|n| match n {
             'A' => Some(0),
@@ -273,8 +290,7 @@ fn to_pos(str: String) -> Option<usize> {
             _ => None,
         })
         .and_then(|col| {
-            str
-                .chars()
+            str.chars()
                 .nth(1)
                 .and_then(|n| n.to_digit(10))
                 .map(|row| row - 1) // 1-indexed to 0-indexed
@@ -293,14 +309,14 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool) -> Stri
     let history = Arc::new(Mutex::new(BTreeSet::new()));
     let mut board = starting_board();
     let mut turn = Player::White;
-    println!("{}\n\n", PrettyBoard{board, debug});
+    println!("{}\n\n", PrettyBoard { board, debug });
 
     let mut i = 0;
     loop {
         let before = SystemTime::now();
-        match make_move(turn, &board, history.clone(), LookAhead(3)) {
+        match make_move(turn, &board, history.clone(), LookAhead(4)) {
             None => return "Draw!".to_string(),
-            Some((b, _)) => board = b,
+            Some((b, _)) => board = *b,
         }
         let after = SystemTime::now();
         match delay {
@@ -317,7 +333,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool) -> Stri
         };
         if print {
             println!("{turn:?} played");
-            println!("{}\n\n", PrettyBoard{board, debug});
+            println!("{}\n\n", PrettyBoard { board, debug });
         }
         i += 1;
         match checkmate(&board) {
@@ -370,8 +386,9 @@ fn make_move(
     board: &Board,
     history: History,
     look_ahead: LookAhead,
-) -> Option<(Board, Rating)> {
-    make_move_(player, board, history, look_ahead, true)
+) -> Option<(Arc<Board>, Rating)> {
+    let parallelise = look_ahead.0 > 2;
+    make_move_(player, board, history, look_ahead, parallelise)
 }
 
 fn make_move_(
@@ -379,60 +396,67 @@ fn make_move_(
     board: &Board,
     history: History,
     look_ahead: LookAhead,
-    top_level: bool,
-) -> Option<(Board, Rating)> {
-    let mut candidates = Vec::new();
+    parallelise: bool,
+) -> Option<(Arc<Board>, Rating)> {
+    let mut candidates : Vec<(Arc<Board>, Rating)> = Vec::new();
     let is_last_iteration = look_ahead.0 == 0;
-    if top_level {
+    if parallelise {
         let mut handles = Vec::new();
-        for candidate in player_moves(player, &board) {
-            {
-                let hist = history.lock().unwrap();
-                if hist.contains(&candidate) {
-                    continue;
-                }
-            }
+        for i in 0..11 {
             let history = history.clone();
-            let handle = thread::spawn(move || -> Rating {
-                if checkmate(&candidate).is_some() {
-                    return best_rating_for(player);
-                }
+            let board = board.clone();
+            let handle = thread::spawn(move || -> Vec<(Arc<Board>,Rating)> {
+                let mut rs = Vec::new();
+                for (j, candidate) in player_moves(player, &board).iter().enumerate() {
+                    if i != j { continue }
+                    {
+                        let hist = history.lock().unwrap();
+                        if hist.contains(candidate.as_ref()) { continue; }
+                    }
 
-                if is_last_iteration {
-                    rate::rate(player, &candidate)
-                } else {
-                    make_move_(
-                        next_player(player),
-                        &candidate,
-                        history,
-                        LookAhead(look_ahead.0 - 1),
-                        false,
-                    )
-                    .unwrap()
-                    .1
+                    if checkmate(candidate).is_some() {
+                        rs.push((candidate.clone(), best_rating_for(player)));
+                        continue;
+                    }
+
+                    let rating = if is_last_iteration {
+                        rate::rate_board(player, &candidate)
+                    } else {
+                        make_move_(
+                            next_player(player),
+                            candidate,
+                            history.clone(),
+                            LookAhead(look_ahead.0 - 1),
+                            false,
+                        )
+                        .unwrap()
+                        .1
+                    };
+                    rs.push((candidate.clone(), rating));
                 }
+                return rs;
             });
-            handles.push((candidate, handle));
+            handles.push(handle);
         }
 
-        for (candidate, handle) in handles.into_iter() {
-            candidates.push((candidate, handle.join().unwrap()));
+        for handle in handles.into_iter() {
+            for c in handle.join().unwrap().iter() {
+                candidates.push(c.clone());
+            }
         }
     } else {
         for candidate in player_moves(player, &board) {
-            {
-                let hist = history.lock().unwrap();
-                if hist.contains(&candidate) {
-                    continue;
-                }
+            if history.lock().unwrap().contains(candidate.as_ref()) {
+                continue;
             }
-            if checkmate(&candidate).is_some() {
+
+            if checkmate(candidate.as_ref()).is_some() {
                 candidates.push((candidate, best_rating_for(player)));
                 continue;
             }
 
             if is_last_iteration {
-                candidates.push((candidate, rate::rate(player, &candidate)));
+                candidates.push((candidate.clone(), rate::rate_board(player, &candidate)));
             } else {
                 let rating = make_move_(
                     next_player(player),
@@ -440,16 +464,16 @@ fn make_move_(
                     history.clone(),
                     LookAhead(look_ahead.0 - 1),
                     false,
-                ).unwrap().1;
+                )
+                .unwrap()
+                .1;
                 candidates.push((candidate, rating));
             }
         }
     }
 
     let mut best_board = None;
-    let mut all_scores = Vec::new();
     for (candidate, rating) in candidates {
-        all_scores.push(rating);
         best_board = match best_board {
             None => Some((candidate, rating)),
             Some((_, best_rating)) => {
@@ -469,8 +493,8 @@ fn make_move_(
 }
 
 // All possible moves for a Player
-fn player_moves(player: Player, board: &Board) -> Vec<Board> {
-    let mut results: Vec<Board> = Vec::new();
+fn player_moves(player: Player, board: &Board) -> Vec<Arc<Board>> {
+    let mut results: Vec<Arc<Board>> = Vec::new();
     for (pos, o_piece) in board.iter().enumerate() {
         let Piece(p, c) = match *o_piece {
             None => continue,
@@ -493,11 +517,11 @@ fn player_moves(player: Player, board: &Board) -> Vec<Board> {
                     continue;
                 }
             }
-            results.push(board.clone());
-            results.last_mut().map(|b| {
-                b[pos] = None;
-                b[*new_pos as usize] = Some(Piece(p, c));
-            });
+
+            let mut b = board.clone();
+            b[pos] = None;
+            b[*new_pos as usize] = Some(Piece(p, c));
+            results.push(Arc::new(b));
         }
     }
     results
@@ -694,11 +718,11 @@ mod rate {
     // The rating represents how good the game looks for the white player.
     pub type Rating = i64;
 
-    pub fn rate(
+    pub fn rate_board(
         turn: Player, // player that just played
         board: &Board,
     ) -> Rating {
-        piece_weights(board) + rate_attack_opportunities(turn, board)
+        piece_weights(board)
     }
 
     fn weight(c: Character) -> i64 {
@@ -801,9 +825,7 @@ mod rate {
         let black_vulnerable: i64 = b_threatened - b_defended;
         return black_vulnerable - white_vulnerable;
     }
-
 }
-
 
 fn next_row(pos: u8) -> Option<u8> {
     let n = pos + 8;
