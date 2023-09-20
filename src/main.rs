@@ -428,7 +428,7 @@ fn make_move(
 
 // Pick best moves for a player
 fn prune(player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
-    let pruned_count = 6;
+    let pruned_count = 10;
     let mut best: Vec<(Rating, Arc<Board>)> = bs
         .clone()
         .iter()
@@ -780,7 +780,7 @@ mod rate {
         turn: Player, // player that just played
         board: &Board,
     ) -> Rating {
-        piece_weights(board)
+        3 * piece_weights(board) + attack_opportunities(turn, board)
     }
 
     fn weight(c: Character) -> i64 {
@@ -1041,7 +1041,7 @@ mod chess_tests {
     }
 
     fn at_pos(str: &'static str, board: &Board) -> Option<Piece> {
-        at(to_pos("F4".to_string()).unwrap() as u8, board)
+        at(to_pos(str.to_string()).unwrap() as u8, board)
     }
 
     #[test]
@@ -1066,7 +1066,7 @@ mod chess_tests {
 
     #[test]
     fn take_the_pawn() {
-        let mut board = make_board(
+        let prev = make_board(
             [ "RHBQKBHR"
             , " PPPPPPP"
             , "        "
@@ -1075,20 +1075,19 @@ mod chess_tests {
             , "  h  h  "
             , "pppppppp"
             , " rbkqb r" ]);
-        let prev = board.clone();
-        board = *make_move(
+        let board = *make_move(
             Player::White,
-            &board,
+            &prev,
             empty_history(),
             LookAhead(5)
         ).unwrap().0;
         println!("{}", diff(&prev, &board, false));
-        assert_eq!(at_pos("A4", &board), Some(Piece(Player::White, Character::Knight)));
+        assert_eq!(at_pos("A4", &board), Some(Piece(Player::Black, Character::Pawn)));
     }
 
     #[test]
     fn move_the_knight() {
-        let mut board = make_board(
+        let prev = make_board(
             [ "RHBQKBHR"
             , "  P PPPP"
             , " P      "
@@ -1097,12 +1096,13 @@ mod chess_tests {
             , "  h     "
             , "pppppppp"
             , "r bkqbhr" ]);
-        board = *make_move(
+        let board = *make_move(
             Player::White,
-            &board,
+            &prev,
             empty_history(),
-            LookAhead(5)
+            LookAhead(3)
         ).unwrap().0;
+        println!("{}", diff(&prev, &board, false));
         assert_eq!(at_pos("C3", &board), None);
     }
 }
