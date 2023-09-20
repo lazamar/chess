@@ -32,6 +32,10 @@ struct CliOptions {
     // Enable debugging logging
     #[arg(long)]
     debug: bool,
+
+    // How many moves to look ahead
+    #[arg(long, value_name = "N", default_value_t = 5)]
+    foresight: u8,
 }
 
 fn main() -> () {
@@ -41,7 +45,7 @@ fn main() -> () {
     if cli.interactive {
         println!("{}", interactive());
     } else {
-        println!("{}", play(delay, cli.print, cli.rounds, cli.debug));
+        println!("{}", play(delay, cli.print, cli.rounds, cli.debug, LookAhead(cli.foresight)));
     }
 }
 
@@ -305,7 +309,7 @@ fn empty_history() -> History {
     Arc::new(Mutex::new(BTreeSet::<Board>::new()))
 }
 
-fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool) -> String {
+fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool, foreseight: LookAhead) -> String {
     let history = Arc::new(Mutex::new(BTreeSet::new()));
     let mut board = starting_board();
     let mut turn = Player::White;
@@ -314,7 +318,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool) -> Stri
     let mut i = 0;
     loop {
         let before = SystemTime::now();
-        match make_move(turn, &board, history.clone(), LookAhead(4)) {
+        match make_move(turn, &board, history.clone(), foreseight) {
             None => return "Draw!".to_string(),
             Some((b, _)) => board = *b,
         }
@@ -379,6 +383,7 @@ fn best_rating_for(player: Player) -> Rating {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 struct LookAhead(u8);
 
 fn make_move(
@@ -391,8 +396,9 @@ fn make_move(
     make_move_(player, board, history, look_ahead, parallelise)
 }
 
-// Use this for pruning the search space
-fn best_moves(n: usize, player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
+// Pick best moves for a player
+fn prune(player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
+    let pruned_count = 6;
     let mut best: Vec<(Rating, Arc<Board>)> = bs
         .clone()
         .iter()
@@ -401,10 +407,10 @@ fn best_moves(n: usize, player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>
         .collect();
     best.sort_by_key(|x| x.0);
     match player {
-        Player::White => {},
-        Player::Black => best.reverse(),
+        Player::White => best.reverse(),
+        Player::Black => {},
     };
-    return best.into_iter().take(n).map(|c| c.1).collect();
+    return best.into_iter().take(pruned_count).map(|c| c.1).collect();
 }
 
 fn make_move_(
@@ -429,7 +435,7 @@ fn make_move_(
                     .filter(|(ix,_)| *ix == i)
                     .map(|(_,c)| c)
                     .collect();
-                for candidate in best_moves(6, player, moves) {
+                for candidate in prune(player, moves) {
                     {
                         let hist = history.lock().unwrap();
                         if hist.contains(candidate.as_ref()) { continue; }
@@ -467,7 +473,7 @@ fn make_move_(
         }
     } else {
         let moves = player_moves(player, &board);
-        for candidate in best_moves(6, player, moves) {
+        for candidate in prune(player, moves) {
             if history.lock().unwrap().contains(candidate.as_ref()) {
                 continue;
             }
@@ -771,8 +777,8 @@ mod rate {
         return total;
     }
 
-    fn rate_attack_opportunities(
-        _turn: Player, // player that just played
+    fn attack_opportunities(
+        turn: Player, // player that just played
         board: &Board,
     ) -> Rating {
         let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
@@ -805,7 +811,7 @@ mod rate {
             }
         }
 
-        let attack_multiplier = 2;
+        let attack_multiplier = |p| if p == turn { 2 } else { 1 };
         let defend_multiplier = 1;
 
         let mut w_threatened = 0; // white pieces threatened
@@ -822,7 +828,7 @@ mod rate {
                 }
                 Some(Piece(Player::White, c)) => {
                     if b_attack[pos] {
-                        w_threatened += attack_multiplier * weight(c);
+                        w_threatened += attack_multiplier(Player::White) * weight(c);
                         if w_attack[pos] {
                             w_defended += defend_multiplier * weight(c);
                         }
@@ -835,7 +841,7 @@ mod rate {
                 }
                 Some(Piece(Player::Black, c)) => {
                     if w_attack[pos] {
-                        b_threatened += attack_multiplier * weight(c);
+                        b_threatened += attack_multiplier(Player::Black) * weight(c);
                         if b_attack[pos] {
                             b_defended += defend_multiplier * weight(c);
                         }
@@ -843,8 +849,8 @@ mod rate {
                 }
             }
         }
-        let white_vulnerable: i64 = w_threatened - w_defended;
-        let black_vulnerable: i64 = b_threatened - b_defended;
+        let white_vulnerable = w_threatened - w_defended;
+        let black_vulnerable = b_threatened - b_defended;
         return black_vulnerable - white_vulnerable;
     }
 }
@@ -962,7 +968,14 @@ mod chess_tests {
             , "        "
             , "  k     "]);
 
-        board = make_move(Player::White, &board, empty_history(), LookAhead(0)).unwrap().0;
+        board = *make_move(
+            Player::White,
+            &board,
+            empty_history(),
+            LookAhead(0))
+            .unwrap().0;
+
+        println!("{}", PrettyBoard { board, debug: false });
         assert_eq!(Some(Player::White), checkmate(&board));
     }
 
@@ -980,7 +993,12 @@ mod chess_tests {
             , "p pp  pp"
             , "r k qbhr"]);
 
-        board = make_move(Player::White, &board, empty_history(), LookAhead(1)).unwrap().0;
+        board = *make_move(
+            Player::White,
+            &board,
+            empty_history(),
+            LookAhead(1))
+            .unwrap().0;
         let bishop_count = board.iter().filter(|p| is(Character::Bishop, **p)).count();
         assert_eq!(bishop_count, 4);
     }
@@ -1007,7 +1025,7 @@ mod chess_tests {
             , " p      "
             , "pbpppppp"
             , "rh kqbhr"]);
-        board = make_move(
+        board = *make_move(
             Player::White,
             &board,
             empty_history(),
@@ -1016,4 +1034,44 @@ mod chess_tests {
         assert_eq!(at_pos("F4", &board), None);
     }
 
+    #[test]
+    fn take_the_pawn() {
+        let mut board = make_board(
+            [ "RHBQKBHR"
+            , " PPPPPPP"
+            , "        "
+            , "        "
+            , "P       "
+            , "  h  h  "
+            , "pppppppp"
+            , " rbkqb r" ]);
+        board = *make_move(
+            Player::White,
+            &board,
+            empty_history(),
+            LookAhead(5)
+        ).unwrap().0;
+        println!("{}", PrettyBoard { board, debug: false });
+        assert_eq!(at_pos("A4", &board), Some(Piece(Player::White, Character::Knight)));
+    }
+
+    #[test]
+    fn move_the_knight() {
+        let mut board = make_board(
+            [ "RHBQKBHR"
+            , "  P PPPP"
+            , " P      "
+            , "P       "
+            , "   P    "
+            , "  h     "
+            , "pppppppp"
+            , "r bkqbhr" ]);
+        board = *make_move(
+            Player::White,
+            &board,
+            empty_history(),
+            LookAhead(5)
+        ).unwrap().0;
+        assert_eq!(at_pos("C3", &board), None);
+    }
 }
