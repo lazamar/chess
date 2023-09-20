@@ -391,6 +391,22 @@ fn make_move(
     make_move_(player, board, history, look_ahead, parallelise)
 }
 
+// Use this for pruning the search space
+fn best_moves(n: usize, player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
+    let mut best: Vec<(Rating, Arc<Board>)> = bs
+        .clone()
+        .iter()
+        .map(|c| rate::rate_board(player, c))
+        .zip(bs)
+        .collect();
+    best.sort_by_key(|x| x.0);
+    match player {
+        Player::White => {},
+        Player::Black => best.reverse(),
+    };
+    return best.into_iter().take(n).map(|c| c.1).collect();
+}
+
 fn make_move_(
     player: Player,
     board: &Board,
@@ -407,14 +423,19 @@ fn make_move_(
             let board = board.clone();
             let handle = thread::spawn(move || -> Vec<(Arc<Board>,Rating)> {
                 let mut rs = Vec::new();
-                for (j, candidate) in player_moves(player, &board).iter().enumerate() {
-                    if i != j { continue }
+                let moves : Vec<Arc<Board>> = player_moves(player, &board)
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(ix,_)| *ix == i)
+                    .map(|(_,c)| c)
+                    .collect();
+                for candidate in best_moves(6, player, moves) {
                     {
                         let hist = history.lock().unwrap();
                         if hist.contains(candidate.as_ref()) { continue; }
                     }
 
-                    if checkmate(candidate).is_some() {
+                    if checkmate(&candidate).is_some() {
                         rs.push((candidate.clone(), best_rating_for(player)));
                         continue;
                     }
@@ -424,7 +445,7 @@ fn make_move_(
                     } else {
                         make_move_(
                             next_player(player),
-                            candidate,
+                            &candidate,
                             history.clone(),
                             LookAhead(look_ahead.0 - 1),
                             false,
@@ -445,7 +466,8 @@ fn make_move_(
             }
         }
     } else {
-        for candidate in player_moves(player, &board) {
+        let moves = player_moves(player, &board);
+        for candidate in best_moves(6, player, moves) {
             if history.lock().unwrap().contains(candidate.as_ref()) {
                 continue;
             }
