@@ -79,6 +79,7 @@ type Board = [Option<Piece>; 64];
 struct PrettyBoard {
     board: Board,
     debug: bool,
+    moved: Option<u8>,
 }
 
 impl fmt::Display for Character {
@@ -119,20 +120,34 @@ impl fmt::Display for Position {
 
 impl fmt::Display for PrettyBoard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let PrettyBoard { board, debug } = *self;
-        let black = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[40m{p}\x1b[0m");
-        let white = |p: Position, f: &mut fmt::Formatter<'_>| write!(f, "\x1b[107m{p}\x1b[0m");
+        let PrettyBoard { board, debug, moved } = *self;
+        let was_moved = |ix| Some(ix as u8) == moved;
+        let black = |p: Position, highlight: bool, f: &mut fmt::Formatter<'_>| {
+            if highlight {
+                write!(f, "\x1b[45m{p}\x1b[0m")
+            } else {
+                write!(f, "\x1b[40m{p}\x1b[0m")
+            }
+        };
+        let white = |p: Position, highlight: bool, f: &mut fmt::Formatter<'_>| {
+            if highlight {
+                write!(f, "\x1b[45m{p}\x1b[0m")
+            } else {
+                write!(f, "\x1b[107m{p}\x1b[0m")
+            }
+        };
         let at = |i: usize| Position(board[i as usize]);
         let mut row = |n: usize| {
             let from = n * 8;
             let mut r = write!(f, "{} ", n + 1);
             for i in 0..4 {
+                let ix = from + 2 * i;
                 r = if row_number(from as u8) % 2 == 0 {
-                    r.and(black(at(from + 2 * i), f))
-                        .and(white(at(from + 2 * i + 1), f))
+                    r.and(black(at(ix), was_moved(ix), f))
+                        .and(white(at(ix + 1), was_moved(ix + 1), f))
                 } else {
-                    r.and(white(at(from + 2 * i), f))
-                        .and(black(at(from + 2 * i + 1), f))
+                    r.and(white(at(ix), was_moved(ix), f))
+                        .and(black(at(ix + 1), was_moved(ix + 1), f))
                 }
             }
 
@@ -172,6 +187,16 @@ impl fmt::Display for PrettyBoard {
     }
 }
 
+fn diff(from: &Board, to: &Board, debug: bool) -> PrettyBoard {
+    let mut moved : Option<u8> = None;
+    for i in 0..63 {
+        if from[i] != to[i] && to[i].is_some() {
+            moved = Some(i as u8);
+        }
+    }
+    PrettyBoard{ board: *to, debug, moved }
+}
+
 // -----------------
 // Playing
 // -----------------
@@ -183,7 +208,8 @@ fn interactive() -> String {
         "{}\n\n",
         PrettyBoard {
             board,
-            debug: false
+            debug: false,
+            moved: None
         }
     );
 
@@ -197,7 +223,8 @@ fn interactive() -> String {
             "{}\n\n",
             PrettyBoard {
                 board,
-                debug: false
+                debug: false,
+                moved: None
             }
         );
         if checkmate(&board).is_some() {
@@ -216,7 +243,8 @@ fn interactive() -> String {
             "{}\n\n",
             PrettyBoard {
                 board,
-                debug: false
+                debug: false,
+                moved: None
             }
         );
         if checkmate(&board).is_some() {
@@ -312,8 +340,9 @@ fn empty_history() -> History {
 fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool, foreseight: LookAhead) -> String {
     let history = Arc::new(Mutex::new(BTreeSet::new()));
     let mut board = starting_board();
+    let mut prev = board.clone();
     let mut turn = Player::White;
-    println!("{}\n\n", PrettyBoard { board, debug });
+    println!("{}\n\n", PrettyBoard { board, debug, moved: None });
 
     let mut i = 0;
     loop {
@@ -337,8 +366,9 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool, foresei
         };
         if print {
             println!("{turn:?} played");
-            println!("{}\n\n", PrettyBoard { board, debug });
+            println!("{}\n\n",  diff(&prev, &board, debug))
         }
+        prev = board.clone();
         i += 1;
         match checkmate(&board) {
             None => {}
@@ -975,7 +1005,7 @@ mod chess_tests {
             LookAhead(0))
             .unwrap().0;
 
-        println!("{}", PrettyBoard { board, debug: false });
+        println!("{}", PrettyBoard { board, debug: false, moved: None });
         assert_eq!(Some(Player::White), checkmate(&board));
     }
 
@@ -1045,13 +1075,14 @@ mod chess_tests {
             , "  h  h  "
             , "pppppppp"
             , " rbkqb r" ]);
+        let prev = board.clone();
         board = *make_move(
             Player::White,
             &board,
             empty_history(),
             LookAhead(5)
         ).unwrap().0;
-        println!("{}", PrettyBoard { board, debug: false });
+        println!("{}", diff(&prev, &board, false));
         assert_eq!(at_pos("A4", &board), Some(Piece(Player::White, Character::Knight)));
     }
 
