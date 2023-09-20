@@ -201,6 +201,8 @@ fn diff(from: &Board, to: &Board, debug: bool) -> PrettyBoard {
 // Playing
 // -----------------
 
+const DEFAULT_LOOKAHEAD : u8 = 4;
+
 fn interactive() -> String {
     let mut board = starting_board();
     println!("You are the white player. You begin.");
@@ -233,7 +235,7 @@ fn interactive() -> String {
 
         thread::sleep(Duration::from_millis(800));
         let history = empty_history();
-        match make_move(Player::Black, &board, history, LookAhead(3)) {
+        match make_move(Player::Black, &board, history, LookAhead(DEFAULT_LOOKAHEAD)) {
             None => return "Draw!".to_string(),
             Some((b, _)) => board = *b,
         }
@@ -428,7 +430,7 @@ fn make_move(
 
 // Pick best moves for a player
 fn prune(player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
-    let pruned_count = 10;
+    let pruned_count = 15;
     let mut best: Vec<(Rating, Arc<Board>)> = bs
         .clone()
         .iter()
@@ -1037,7 +1039,7 @@ mod chess_tests {
             Player::White,
             &board,
             empty_history(),
-            LookAhead(1))
+            LookAhead(DEFAULT_LOOKAHEAD))
             .unwrap().0;
         let bishop_count = board.iter().filter(|p| is(Character::Bishop, **p)).count();
         assert_eq!(bishop_count, 4);
@@ -1069,7 +1071,7 @@ mod chess_tests {
             Player::White,
             &board,
             empty_history(),
-            LookAhead(3)
+            LookAhead(DEFAULT_LOOKAHEAD)
         ).unwrap().0;
         assert_eq!(at_pos("F4", &board), None);
     }
@@ -1091,7 +1093,7 @@ mod chess_tests {
             Player::White,
             &prev,
             empty_history(),
-            LookAhead(5)
+            LookAhead(DEFAULT_LOOKAHEAD)
         ).unwrap().0;
         println!("{}", diff(&prev, &board, false));
         assert_eq!(at_pos("A4", &board), Some(Piece(Player::Black, Character::Pawn)));
@@ -1112,7 +1114,7 @@ mod chess_tests {
             Player::White,
             &prev,
             empty_history(),
-            LookAhead(5)
+            LookAhead(DEFAULT_LOOKAHEAD)
         ).unwrap().0;
         println!("{}", diff(&prev, &board, false));
         assert_eq!(at_pos("C3", &board), None);
