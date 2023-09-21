@@ -229,14 +229,15 @@ fn interactive() -> String {
                 moved: None
             }
         );
-        if checkmate(&board).is_some() {
-            return "You win!".to_string();
-        }
 
         thread::sleep(Duration::from_millis(800));
         let history = empty_history();
-        match make_move(Player::Black, &board, history, LookAhead(DEFAULT_LOOKAHEAD)) {
-            None => return "Draw!".to_string(),
+        match make_move(
+            Player::Black,
+            &board,
+            history,
+            LookAhead(DEFAULT_LOOKAHEAD)) {
+            None => return "You win!".to_string(),
             Some((b, _)) => board = *b,
         }
 
@@ -249,9 +250,6 @@ fn interactive() -> String {
                 moved: None
             }
         );
-        if checkmate(&board).is_some() {
-            return "You lose!".to_string();
-        }
     }
 }
 
@@ -350,7 +348,7 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool, foresei
     loop {
         let before = SystemTime::now();
         match make_move(turn, &board, history.clone(), foreseight) {
-            None => return "Draw!".to_string(),
+            None => return format!("The winner is: {turn:?}").to_string(),
             Some((b, _)) => board = *b,
         }
         let after = SystemTime::now();
@@ -372,10 +370,6 @@ fn play(delay: Option<u64>, print: bool, max_rounds: usize, debug: bool, foresei
         }
         prev = board.clone();
         i += 1;
-        match checkmate(&board) {
-            None => {}
-            Some(player) => return format!("The winner is: {player:?}"),
-        }
         if i >= max_rounds {
             return "Reached max iterations".to_string();
         }
@@ -389,23 +383,6 @@ fn next_player(player: Player) -> Player {
         Player::White => Player::Black,
         Player::Black => Player::White,
     }
-}
-
-fn checkmate(board: &Board) -> Option<Player> {
-    let mut kings = Vec::new();
-    for piece in board.iter() {
-        match piece {
-            Some(Piece(player, Character::King)) => kings.push(player),
-            _ => {}
-        }
-    }
-    if let None = kings.iter().find(|&&p| *p == Player::White) {
-        return Some(Player::Black);
-    }
-    if let None = kings.iter().find(|&&p| *p == Player::Black) {
-        return Some(Player::White);
-    }
-    return None;
 }
 
 fn best_rating_for(player: Player) -> Rating {
@@ -430,7 +407,7 @@ fn make_move(
 
 // Pick best moves for a player
 fn prune(player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
-    let pruned_count = 15;
+    let pruned_count = 10;
     let mut best: Vec<(Rating, Arc<Board>)> = bs
         .clone()
         .iter()
@@ -474,11 +451,6 @@ fn make_move_(
                         if hist.contains(candidate.as_ref()) { continue; }
                     }
 
-                    if checkmate(&candidate).is_some() {
-                        rs.push((candidate.clone(), best_rating_for(player)));
-                        continue;
-                    }
-
                     let rating = if is_last_iteration {
                         match rate::rate_board(player, &candidate) {
                             None => continue,
@@ -511,11 +483,6 @@ fn make_move_(
         let moves = player_moves(player, &board);
         for candidate in prune(player, moves) {
             if history.lock().unwrap().contains(candidate.as_ref()) {
-                continue;
-            }
-
-            if checkmate(candidate.as_ref()).is_some() {
-                candidates.push((candidate, best_rating_for(player)));
                 continue;
             }
 
@@ -576,7 +543,7 @@ fn player_moves(player: Player, board: &Board) -> Vec<Arc<Board>> {
         // gather all the moves
         let moves = piece_moves(p, c, pos, board);
 
-        // creaete boards with those moves
+        // create boards with those moves
         for new_pos in moves.iter() {
             // skip moves that take pieces of the same colour as the current player
             if let Some(Piece(other, _)) = at(*new_pos, board) {
@@ -585,9 +552,15 @@ fn player_moves(player: Player, board: &Board) -> Vec<Arc<Board>> {
                 }
             }
 
+
             let mut b = board.clone();
             b[pos] = None;
             b[*new_pos as usize] = Some(Piece(p, c));
+
+            // skip illegal moves
+            if rate::is_in_check(player, &b) {
+                continue;
+            }
             results.push(Arc::new(b));
         }
     }
@@ -597,7 +570,7 @@ fn player_moves(player: Player, board: &Board) -> Vec<Arc<Board>> {
 fn piece_moves(player: Player, character: Character, pos: usize, board: &Board) -> Vec<u8> {
     match character {
         Character::Pawn => pawn_moves(player, pos, board),
-        Character::Rook => hook_moves(pos, board),
+        Character::Rook => rook_moves(pos, board),
         Character::Bishop => bishop_moves(pos, board),
         Character::Knight => knight_moves(pos),
         Character::Queen => queen_moves(pos, board),
@@ -704,7 +677,7 @@ fn bishop_moves(pos: usize, board: &Board) -> Vec<u8> {
     )
 }
 
-fn hook_moves(pos: usize, board: &Board) -> Vec<u8> {
+fn rook_moves(pos: usize, board: &Board) -> Vec<u8> {
     long_range_moves(
         pos,
         board,
@@ -821,36 +794,7 @@ mod rate {
         turn: Player, // player that just played
         board: &Board,
     ) -> Option<Rating> {
-        let mut w_attack: [bool; 64] = [false; 64]; // positions attacked by white
-        let mut b_attack: [bool; 64] = [false; 64]; // positions attacked by black
-
-        let mut attack = |player: Player, pos: u8| {
-            match player {
-                Player::White => w_attack[pos as usize] = true,
-                Player::Black => b_attack[pos as usize] = true,
-            };
-        };
-        for (pos, piece) in board.iter().enumerate() {
-            let (player, moves) = match *piece {
-                None => continue,
-                Some(Piece(player, Character::Pawn)) => (player, pawn_moves(player, pos, board)),
-                Some(Piece(player, Character::Rook)) => (player, hook_moves(pos, board)),
-                Some(Piece(player, Character::Bishop)) => (player, bishop_moves(pos, board)),
-                Some(Piece(player, Character::Knight)) => (player, knight_moves(pos)),
-                Some(Piece(player, Character::Queen)) => (player, queen_moves(pos, board)),
-                Some(Piece(player, Character::King)) => (player, king_moves(pos)),
-            };
-            for target in moves.iter() {
-                let Piece(other, _) = match at(*target as u8, board) {
-                    None => continue,
-                    Some(p) => p,
-                };
-                if other != player {
-                    attack(player, *target);
-                }
-            }
-        }
-
+        let attacked_by = attack_surface(board);
         let attack_multiplier = |p| if p == turn { 2 } else { 1 };
         let defend_multiplier = 1;
 
@@ -862,29 +806,29 @@ mod rate {
             match *piece {
                 None => {}
                 Some(Piece(Player::White, Character::King)) => {
-                    if b_attack[pos] {
+                    if attacked_by.black[pos] {
                         if turn == Player::White { return None }
                         w_threatened += weight(Character::King);
                     }
                 }
                 Some(Piece(Player::White, c)) => {
-                    if b_attack[pos] {
+                    if attacked_by.black[pos] {
                         w_threatened += attack_multiplier(Player::White) * weight(c);
-                        if w_attack[pos] {
+                        if attacked_by.white[pos] {
                             w_defended += defend_multiplier * weight(c);
                         }
                     }
                 }
                 Some(Piece(Player::Black, Character::King)) => {
-                    if w_attack[pos] {
+                    if attacked_by.white[pos] {
                         if turn == Player::Black { return None }
                         b_threatened += weight(Character::King);
                     }
                 }
                 Some(Piece(Player::Black, c)) => {
-                    if w_attack[pos] {
+                    if attacked_by.white[pos] {
                         b_threatened += attack_multiplier(Player::Black) * weight(c);
-                        if b_attack[pos] {
+                        if attacked_by.black[pos] {
                             b_defended += defend_multiplier * weight(c);
                         }
                     }
@@ -894,6 +838,67 @@ mod rate {
         let white_vulnerable = w_threatened - w_defended;
         let black_vulnerable = b_threatened - b_defended;
         return Some(black_vulnerable - white_vulnerable);
+    }
+
+    pub fn checkmated(
+        player:Player, // check if this player is checkmated
+        history: History,
+        board: &Board) -> bool {
+        !make_move(
+            player,
+            board,
+            history,
+            LookAhead(0))
+            .is_some()
+    }
+
+    pub fn is_in_check(player: Player, board: &Board) -> bool {
+        let attacked_by = attack_surface(board);
+        for (i, piece) in board.iter().enumerate() {
+            match (player, piece) {
+                (Player::White, Some(Piece(Player::White, Character::King))) =>
+                    return attacked_by.black[i],
+                (Player::Black, Some(Piece(Player::Black, Character::King))) =>
+                    return attacked_by.white[i],
+                _ => continue
+            };
+        }
+        return true;
+    }
+
+
+    #[derive(Debug)]
+    pub struct AttackSurface {
+        pub white: [bool; 64], // positions attacked by white
+        pub black: [bool; 64]  // positions attacked by black
+    }
+
+    pub fn attack_surface(board : &Board) -> AttackSurface {
+        let mut attacked_by_white : [bool; 64] = [false; 64];
+        let mut attacked_by_black : [bool; 64] = [false; 64];
+        for (pos, piece ) in board.iter().enumerate() {
+            let (player, moves) = match piece {
+                None => continue,
+                Some(Piece(player, character)) => (*player, piece_moves(*player, *character, pos, board))
+            };
+            for target in moves.iter() {
+                let Piece(other, _) = match board[*target as usize] {
+                    None => continue,
+                    Some(p) => p,
+                };
+                if other != player {
+                    match player {
+                        Player::White => attacked_by_white[*target as usize] = true,
+                        Player::Black => attacked_by_black[*target as usize] = true
+                    }
+                }
+            }
+        }
+
+        return AttackSurface {
+            white: attacked_by_white,
+            black: attacked_by_black
+        };
     }
 }
 
@@ -987,15 +992,17 @@ mod chess_tests {
     #[test]
     fn detect_checkmate() {
         let board = make_board(
-            [ "RHBQ BHR"
-            , "PPPPPPPP"
+            [ "        "
             , "        "
             , "        "
             , "        "
             , "        "
-            , "pppppppp"
-            , "rhbkqbhr"]);
-        assert_eq!(Some(Player::White), checkmate(&board));
+            , "        "
+            , "q       "
+            , "q    K  "]);
+        assert_eq!(
+            true,
+            rate::checkmated(Player::Black, empty_history(), &board));
     }
 
     #[test]
@@ -1018,7 +1025,9 @@ mod chess_tests {
             .unwrap().0;
 
         println!("{}", PrettyBoard { board, debug: false, moved: None });
-        assert_eq!(Some(Player::White), checkmate(&board));
+        assert_eq!(
+            true,
+            rate::checkmated(Player::Black, empty_history(), &board));
     }
 
     // TODO
@@ -1118,5 +1127,49 @@ mod chess_tests {
         ).unwrap().0;
         println!("{}", diff(&prev, &board, false));
         assert_eq!(at_pos("C3", &board), None);
+    }
+
+    #[test]
+    fn check_detection() {
+        let board = make_board(
+            [ "RHB K HR"
+            , "    P  P"
+            , " PP  P B"
+            , "        "
+            , "P  Q  p "
+            , "     p  "
+            , "ppp    q"
+            , "rh k bhr"]);
+        println!("{}", PrettyBoard {
+            board: board,
+            debug:false,
+            moved: None });
+        assert_eq!(true, rate::is_in_check(Player::White, &board));
+    }
+
+    #[test]
+    fn attack_queen() {
+        let board = make_board(
+            [ "        "
+            , "        "
+            , "P       "
+            , "P       "
+            , "   P    "
+            , "  P     "
+            , "        "
+            , "q     PP"]);
+        let attacked_by = rate::attack_surface(&board);
+
+        println!("{}", PrettyBoard {
+            board: board,
+            debug:false,
+            moved: None });
+
+        assert_eq!(true, attacked_by.white[to_pos("A5".to_string()).unwrap()]);
+        assert_eq!(false,attacked_by.white[to_pos("A6".to_string()).unwrap()]);
+        assert_eq!(true, attacked_by.white[to_pos("G1".to_string()).unwrap()]);
+        assert_eq!(false,attacked_by.white[to_pos("H1".to_string()).unwrap()]);
+        assert_eq!(true, attacked_by.white[to_pos("C3".to_string()).unwrap()]);
+        assert_eq!(false,attacked_by.white[to_pos("D4".to_string()).unwrap()]);
     }
 }
