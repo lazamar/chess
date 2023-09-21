@@ -189,7 +189,7 @@ impl fmt::Display for PrettyBoard {
 
 fn diff(from: &Board, to: &Board, debug: bool) -> PrettyBoard {
     let mut moved : Option<u8> = None;
-    for i in 0..63 {
+    for i in 0..64 {
         if from[i] != to[i] && to[i].is_some() {
             moved = Some(i as u8);
         }
@@ -201,7 +201,7 @@ fn diff(from: &Board, to: &Board, debug: bool) -> PrettyBoard {
 // Playing
 // -----------------
 
-const DEFAULT_LOOKAHEAD : u8 = 4;
+const DEFAULT_LOOKAHEAD : LookAhead = LookAhead(4);
 
 fn interactive() -> String {
     let mut board = starting_board();
@@ -236,7 +236,7 @@ fn interactive() -> String {
             Player::Black,
             &board,
             history,
-            LookAhead(DEFAULT_LOOKAHEAD)) {
+            DEFAULT_LOOKAHEAD) {
             None => return "You win!".to_string(),
             Some((b, _)) => board = *b,
         }
@@ -405,24 +405,6 @@ fn make_move(
     make_move_(player, board, history, look_ahead, parallelise)
 }
 
-// Pick best moves for a player
-fn prune(player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
-    let pruned_count = 10;
-    let mut best: Vec<(Rating, Arc<Board>)> = bs
-        .clone()
-        .iter()
-        .map(|c| rate::rate_board(player, c))
-        .flatten()
-        .zip(bs)
-        .collect();
-    best.sort_by_key(|x| x.0);
-    match player {
-        Player::White => best.reverse(),
-        Player::Black => {},
-    };
-    return best.into_iter().take(pruned_count).map(|c| c.1).collect();
-}
-
 fn make_move_(
     player: Player,
     board: &Board,
@@ -434,7 +416,7 @@ fn make_move_(
     let is_last_iteration = look_ahead.0 == 0;
     if parallelise {
         let mut handles = Vec::new();
-        for i in 0..11 {
+        for i in 0..12 {
             let history = history.clone();
             let board = board.clone();
             let handle = thread::spawn(move || -> Vec<(Arc<Board>,Rating)> {
@@ -524,6 +506,24 @@ fn make_move_(
         }
     }
     return best_board;
+}
+
+// Pick best moves for a player
+fn prune(player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
+    let pruned_count = 10;
+    let mut best: Vec<(Rating, Arc<Board>)> = bs
+        .clone()
+        .iter()
+        .map(|c| rate::rate_board(player, c))
+        .flatten()
+        .zip(bs)
+        .collect();
+    best.sort_by_key(|x| x.0);
+    match player {
+        Player::White => best.reverse(),
+        Player::Black => {},
+    };
+    return best.into_iter().take(pruned_count).map(|c| c.1).collect();
 }
 
 // All possible moves for a Player
@@ -987,6 +987,55 @@ fn make_board(mut chars: [&str; 8]) -> Board {
     return board;
 }
 
+struct Rationale(Vec<Option<(Arc<Board>, Rating)>>);
+
+impl fmt::Display for Rationale {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut prev: Arc<Board> = match self.0.first() {
+            None => return write!(f, "<NO_MOVES>"),
+            Some(None) => return write!(f, "<NO_OPTION>"),
+            Some(Some((board,_))) => board.clone(),
+        };
+        for b in self.0.iter() {
+            _ = match b {
+                None => write!(f, "<NO_OPTION>"),
+                Some((board, rating)) => {
+                    let d = diff(&prev, &board, false);
+                    prev = board.clone();
+                    writeln!(f, "Rating: {}\n{}", rating, d)
+                }
+            }
+        }
+        return write!(f, "");
+    }
+}
+
+// Show all steps considered for the next move.
+fn rationalise(
+    player: Player,
+    board: &Board,
+    history: History,
+    LookAhead(n): LookAhead) -> Rationale {
+    let mut rationale = Vec::new();
+    rationale.push(Some((Arc::new(*board), 9999)));
+    let mut turn = player;
+    let mut next = Arc::new(*board);
+    for i in 0..(n + 1) {
+        let new_board = make_move(
+            player,
+            &next,
+            history.clone(),
+            LookAhead(n - i));
+        rationale.push(new_board.clone());
+        match new_board {
+            None => break,
+            Some((b,_)) => next = b
+        }
+        turn = next_player(turn);
+    }
+    return Rationale(rationale);
+}
+
 #[rustfmt::skip]
 #[cfg(test)]
 mod chess_tests {
@@ -1051,7 +1100,7 @@ mod chess_tests {
             Player::White,
             &board,
             empty_history(),
-            LookAhead(DEFAULT_LOOKAHEAD))
+            DEFAULT_LOOKAHEAD)
             .unwrap().0;
         let bishop_count = board.iter().filter(|p| is(Character::Bishop, **p)).count();
         assert_eq!(bishop_count, 4);
@@ -1083,7 +1132,7 @@ mod chess_tests {
             Player::White,
             &board,
             empty_history(),
-            LookAhead(DEFAULT_LOOKAHEAD)
+            DEFAULT_LOOKAHEAD
         ).unwrap().0;
         assert_eq!(at_pos("F4", &board), None);
     }
@@ -1105,7 +1154,7 @@ mod chess_tests {
             Player::White,
             &prev,
             empty_history(),
-            LookAhead(DEFAULT_LOOKAHEAD)
+            DEFAULT_LOOKAHEAD
         ).unwrap().0;
         println!("{}", diff(&prev, &board, false));
         assert_eq!(at_pos("A4", &board), Some(Piece(Player::Black, Character::Pawn)));
@@ -1126,9 +1175,13 @@ mod chess_tests {
             Player::White,
             &prev,
             empty_history(),
-            LookAhead(DEFAULT_LOOKAHEAD)
+            DEFAULT_LOOKAHEAD
         ).unwrap().0;
-        println!("{}", diff(&prev, &board, false));
+        println!("{}", rationalise(
+            Player::White,
+            &prev,
+            empty_history(),
+            DEFAULT_LOOKAHEAD));
         assert_eq!(at_pos("C3", &board), None);
     }
 
