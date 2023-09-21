@@ -35,7 +35,7 @@ struct CliOptions {
     debug: bool,
 
     // How many moves to look ahead
-    #[arg(long, value_name = "N", default_value_t = 5)]
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_LOOKAHEAD.0)]
     foresight: u8,
 }
 
@@ -768,8 +768,8 @@ mod rate {
         _turn: Player, // player that just played
         board: &Board,
     ) -> Option<Rating> {
-        let attacks = attack_surface(board);
-        Some(4 * piece_weights(board) + attacks.white_count - attacks.black_count)
+        let attacked_by = attack_surface(board);
+        Some(4 * piece_weights(board) + dominance(board, attacked_by))
     }
 
     fn weight(c: Character) -> i64 {
@@ -794,6 +794,30 @@ mod rate {
             };
         }
         return total;
+    }
+
+    // Moves that can be made without being attacked
+    // by the adversary.
+    fn dominance(board: &Board, attacked_by: AttackSurface) -> i64 {
+        let mut white_threatens = 0;
+        let mut black_threatens = 0;
+
+        for i in 0..64 {
+            match at(i as u8, board) {
+                None => continue,
+                Some(Piece(Player::White, _)) => {
+                    if attacked_by.black[i] {
+                        black_threatens += 1;
+                    }
+                },
+                Some(Piece(Player::Black, _)) => {
+                    if attacked_by.white[i] {
+                        white_threatens += 1;
+                    }
+                }
+            }
+        }
+        return white_threatens - black_threatens;
     }
 
     fn attack_opportunities(
@@ -879,16 +903,12 @@ mod rate {
     pub struct AttackSurface {
         pub white: [bool; 64], // positions attacked by white
         pub black: [bool; 64], // positions attacked by black
-        pub white_count: i64,
-        pub black_count: i64,
     }
 
     pub fn attack_surface(board : &Board) -> AttackSurface {
         let mut attacked_by = AttackSurface {
             white: [false; 64],
             black: [false; 64],
-            white_count: 0,
-            black_count: 0
         };
         for (pos, piece ) in board.iter().enumerate() {
             let (player, moves) = match piece {
@@ -898,11 +918,9 @@ mod rate {
             for target in moves.iter() {
                 match player {
                     Player::White => {
-                        attacked_by.white_count += 1;
                         attacked_by.white[*target as usize] = true;
                     },
                     Player::Black => {
-                        attacked_by.black_count += 1;
                         attacked_by.black[*target as usize] = true;
                     }
                 }
