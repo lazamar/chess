@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
+use std::thread::available_parallelism;
 
 /// Play a game of chess
 #[derive(Parser, Debug)]
@@ -201,7 +202,7 @@ fn diff(from: &Board, to: &Board, debug: bool) -> PrettyBoard {
 // Playing
 // -----------------
 
-const DEFAULT_LOOKAHEAD : LookAhead = LookAhead(4);
+const DEFAULT_LOOKAHEAD : LookAhead = LookAhead(2);
 
 fn interactive() -> String {
     let mut board = starting_board();
@@ -416,7 +417,8 @@ fn make_move_(
     let is_last_iteration = look_ahead.0 == 0;
     if parallelise {
         let mut handles = Vec::new();
-        for i in 0..12 {
+        let parallelism = available_parallelism().unwrap().get();
+        for i in 0..parallelism {
             let history = history.clone();
             let board = board.clone();
             let handle = thread::spawn(move || -> Vec<(Arc<Board>,Rating)> {
@@ -424,7 +426,7 @@ fn make_move_(
                 let moves : Vec<Arc<Board>> = player_moves(player, &board)
                     .into_iter()
                     .enumerate()
-                    .filter(|(ix,_)| *ix == i)
+                    .filter(|(ix,_)| *ix % parallelism == i)
                     .map(|(_,c)| c)
                     .collect();
                 for candidate in prune(player, moves) {
@@ -439,15 +441,15 @@ fn make_move_(
                             Some(r) => r
                         }
                     } else {
-                        make_move_(
+                        match make_move_(
                             next_player(player),
                             &candidate,
                             history.clone(),
                             LookAhead(look_ahead.0 - 1),
-                            false,
-                        )
-                        .unwrap()
-                        .1
+                            false) {
+                            None => continue,
+                            Some((_,r)) => r
+                        }
                     };
                     rs.push((candidate.clone(), rating));
                 }
@@ -490,6 +492,10 @@ fn make_move_(
 
     let mut best_board = None;
     for (candidate, rating) in candidates {
+        // skip illegal moves
+        if rate::is_in_check(player, board, &rate::attack_surface(board)) {
+            continue;
+        }
         best_board = match best_board {
             None => Some((candidate, rating)),
             Some((_, best_rating)) => {
@@ -510,6 +516,7 @@ fn make_move_(
 
 // Pick best moves for a player
 fn prune(player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
+    return bs;
     let pruned_count = 10;
     let mut best: Vec<(Rating, Arc<Board>)> = bs
         .clone()
@@ -754,14 +761,10 @@ mod rate {
     pub type Rating = i64;
 
     pub fn rate_board(
-        turn: Player, // player that just played
+        _turn: Player, // player that just played
         board: &Board,
     ) -> Option<Rating> {
         let attacks = attack_surface(board);
-        // skip illegal moves
-        if rate::is_in_check(turn, board, &attacks) {
-            return None;
-        }
         Some(piece_weights(board))
     }
 
@@ -777,7 +780,7 @@ mod rate {
     }
 
     // Sum of weights of white pieces minus black ones.
-    fn piece_weights(board: &Board) -> i64 {
+    pub fn piece_weights(board: &Board) -> i64 {
         let mut total = 0;
         for piece in board {
             match *piece {
@@ -987,16 +990,28 @@ fn make_board(mut chars: [&str; 8]) -> Board {
     return board;
 }
 
-struct Rationale(Vec<Option<(Arc<Board>, Rating)>>);
+#[rustfmt::skip]
+#[cfg(test)]
+mod chess_tests {
+use super::*;
+
+// Move selection is based solely on the score of moves in the last expansion.
+// A 'Rationale' gives visibility into the intermediate scores.
+struct Rationale {
+    // Moves from earliest to latest paired with
+    // the board score for the move.
+    moves: Vec<Option<(Arc<Board>, Rating)>>,
+}
 
 impl fmt::Display for Rationale {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut prev: Arc<Board> = match self.0.first() {
+        let mut prev: Arc<Board> = match self.moves.first() {
             None => return write!(f, "<NO_MOVES>"),
             Some(None) => return write!(f, "<NO_OPTION>"),
             Some(Some((board,_))) => board.clone(),
         };
-        for b in self.0.iter() {
+        for (i, b) in self.moves.iter().enumerate() {
+            _ = writeln!(f, "Move {}", i);
             _ = match b {
                 None => write!(f, "<NO_OPTION>"),
                 Some((board, rating)) => {
@@ -1016,219 +1031,229 @@ fn rationalise(
     board: &Board,
     history: History,
     LookAhead(n): LookAhead) -> Rationale {
-    let mut rationale = Vec::new();
-    rationale.push(Some((Arc::new(*board), 9999)));
+    let mut moves = Vec::new();
+    moves.push(Some((Arc::new(*board), rate::rate_board(player, board).unwrap())));
     let mut turn = player;
     let mut next = Arc::new(*board);
+    let mut top_level_score = None;
     for i in 0..(n + 1) {
-        let new_board = make_move(
-            player,
+        let updated = make_move(
+            turn,
             &next,
             history.clone(),
             LookAhead(n - i));
-        rationale.push(new_board.clone());
-        match new_board {
-            None => break,
-            Some((b,_)) => next = b
+        match &updated {
+            None => moves.push(None),
+            Some((b,r)) => {
+                match top_level_score {
+                    None => top_level_score = Some(r.clone()),
+                    Some(rating) => assert_eq!(rating, *r)
+                };
+                let score = rate::rate_board(turn, b).unwrap();
+                moves.push(Some((b.clone(), score)));
+                next = b.clone();
+            }
         }
         turn = next_player(turn);
     }
-    return Rationale(rationale);
+    return Rationale{ moves };
 }
 
-#[rustfmt::skip]
-#[cfg(test)]
-mod chess_tests {
-    use super::*;
+fn move_with_rationale(
+    player: Player,
+    board: &Board,
+    history: History,
+    look_ahead: LookAhead) -> Arc<Board> {
+    let rationale = rationalise(player, board, history, look_ahead);
+    println!("{}", rationale);
+    return rationale.moves.get(1).unwrap().clone().unwrap().0;
+}
 
-    #[test]
-    fn detect_checkmate() {
-        let board = make_board(
-            [ "        "
-            , "        "
-            , "        "
-            , "        "
-            , "        "
-            , "        "
-            , "q       "
-            , "q    K  "]);
-        assert_eq!(
-            true,
-            rate::checkmated(Player::Black, empty_history(), &board));
+
+#[test]
+fn detect_checkmate() {
+    let board = make_board(
+        [ "        "
+        , "        "
+        , "        "
+        , "        "
+        , "        "
+        , "        "
+        , "q       "
+        , "q    K  "]);
+    assert_eq!(
+        true,
+        rate::checkmated(Player::Black, empty_history(), &board));
+}
+
+#[test]
+fn play_checkmate() {
+    let mut board = make_board(
+        [ "RHBQKBHR"
+        , "   q    "
+        , "        "
+        , "        "
+        , "        "
+        , "        "
+        , "        "
+        , "  k     "]);
+
+    board = *make_move(
+        Player::White,
+        &board,
+        empty_history(),
+        LookAhead(0))
+        .unwrap().0;
+
+    println!("{}", PrettyBoard { board, debug: false, moved: None });
+    assert_eq!(
+        true,
+        rate::checkmated(Player::Black, empty_history(), &board));
+}
+
+#[test]
+fn dont_take_equivalent_swap() {
+    let mut board = make_board(
+        [ "R  QKBHR"
+        , "PPPH PPP"
+        , "  B     "
+        , "   PP   "
+        , "    pp  "
+        , "bph     "
+        , "p pp  pp"
+        , "r k qbhr"]);
+
+    board = *make_move(
+        Player::White,
+        &board,
+        empty_history(),
+        DEFAULT_LOOKAHEAD)
+        .unwrap().0;
+    let bishop_count = board.iter().filter(|p| is(Character::Bishop, **p)).count();
+    assert_eq!(bishop_count, 4);
+}
+
+fn is(character: Character, piece: Option<Piece>) -> bool {
+    match piece {
+        None => false,
+        Some(Piece(_,c)) => c == character
     }
+}
 
-    #[test]
-    fn play_checkmate() {
-        let mut board = make_board(
-            [ "RHBQKBHR"
-            , "   q    "
-            , "        "
-            , "        "
-            , "        "
-            , "        "
-            , "        "
-            , "  k     "]);
+fn at_pos(str: &'static str, board: &Board) -> Option<Piece> {
+    at(to_pos(str.to_string()).unwrap() as u8, board)
+}
 
-        board = *make_move(
-            Player::White,
-            &board,
-            empty_history(),
-            LookAhead(0))
-            .unwrap().0;
+#[test]
+fn dont_give_pawn_away() {
+    let mut board = make_board(
+        [ "RHBQKBHR"
+        , "PPP  PPP"
+        , "   P    "
+        , "    P   "
+        , "        "
+        , " p      "
+        , "pbpppppp"
+        , "rh kqbhr"]);
+    board = *make_move(
+        Player::White,
+        &board,
+        empty_history(),
+        DEFAULT_LOOKAHEAD
+    ).unwrap().0;
+    assert_eq!(at_pos("F4", &board), None);
+}
 
-        println!("{}", PrettyBoard { board, debug: false, moved: None });
-        assert_eq!(
-            true,
-            rate::checkmated(Player::Black, empty_history(), &board));
-    }
+// TODO
+#[test]
+fn take_the_pawn() {
+    let prev = make_board(
+        [ "RHBQKBHR"
+        , " PPPPPPP"
+        , "        "
+        , "        "
+        , "P       "
+        , "  h  h  "
+        , "pppppppp"
+        , " rbkqb r" ]);
+    let board = *make_move(
+        Player::White,
+        &prev,
+        empty_history(),
+        DEFAULT_LOOKAHEAD
+    ).unwrap().0;
+    println!("{}", diff(&prev, &board, false));
+    assert_eq!(at_pos("A4", &board), Some(Piece(Player::Black, Character::Pawn)));
+}
 
-    // TODO
-    #[ignore]
-    #[test]
-    fn dont_take_equivalent_swap() {
-        let mut board = make_board(
-            [ "R  QKBHR"
-            , "PPPH PPP"
-            , "  B     "
-            , "   PP   "
-            , "    pp  "
-            , "bph     "
-            , "p pp  pp"
-            , "r k qbhr"]);
+#[test]
+fn move_the_knight() {
+    let prev = make_board(
+        [ "RHBQKBHR"
+        , "  P PPPP"
+        , " P      "
+        , "P       "
+        , "   P    "
+        , "  h     "
+        , "pppppppp"
+        , "r bkqbhr" ]);
+    let board = move_with_rationale(
+        Player::White,
+        &prev,
+        empty_history(),
+        DEFAULT_LOOKAHEAD);
+    assert_eq!(at_pos("C3", &board), None);
+}
 
-        board = *make_move(
-            Player::White,
-            &board,
-            empty_history(),
-            DEFAULT_LOOKAHEAD)
-            .unwrap().0;
-        let bishop_count = board.iter().filter(|p| is(Character::Bishop, **p)).count();
-        assert_eq!(bishop_count, 4);
-    }
+#[test]
+fn check_detection() {
+    let board = make_board(
+        [ "RHB K HR"
+        , "    P  P"
+        , " PP  P B"
+        , "        "
+        , "P  Q  p "
+        , "     p  "
+        , "ppp    q"
+        , "rh k bhr"]);
+    println!("{}", PrettyBoard {
+        board: board,
+        debug:false,
+        moved: None });
+    assert_eq!(true, rate::is_in_check(
+        Player::White,
+        &board,
+        &rate::attack_surface(&board)));
+}
 
-    fn is(character: Character, piece: Option<Piece>) -> bool {
-        match piece {
-            None => false,
-            Some(Piece(_,c)) => c == character
-        }
-    }
+#[test]
+fn attack_queen() {
+    let board = make_board(
+        [ "        "
+        , "        "
+        , "P       "
+        , "P       "
+        , "   P    "
+        , "  P     "
+        , "        "
+        , "q     PP"]);
+    let attacked_by = rate::attack_surface(&board);
 
-    fn at_pos(str: &'static str, board: &Board) -> Option<Piece> {
-        at(to_pos(str.to_string()).unwrap() as u8, board)
-    }
+    println!("{}", PrettyBoard {
+        board: board,
+        debug:false,
+        moved: None });
 
-    #[test]
-    fn dont_give_pawn_away() {
-        let mut board = make_board(
-            [ "RHBQKBHR"
-            , "PPP  PPP"
-            , "   P    "
-            , "    P   "
-            , "        "
-            , " p      "
-            , "pbpppppp"
-            , "rh kqbhr"]);
-        board = *make_move(
-            Player::White,
-            &board,
-            empty_history(),
-            DEFAULT_LOOKAHEAD
-        ).unwrap().0;
-        assert_eq!(at_pos("F4", &board), None);
-    }
+    assert_eq!(true, attacked_by.white[to_pos("A5".to_string()).unwrap()]);
+    assert_eq!(false,attacked_by.white[to_pos("A6".to_string()).unwrap()]);
+    assert_eq!(true, attacked_by.white[to_pos("G1".to_string()).unwrap()]);
+    assert_eq!(false,attacked_by.white[to_pos("H1".to_string()).unwrap()]);
+    assert_eq!(true, attacked_by.white[to_pos("C3".to_string()).unwrap()]);
+    assert_eq!(false,attacked_by.white[to_pos("D4".to_string()).unwrap()]);
+}
 
-    // TODO
-    #[ignore]
-    #[test]
-    fn take_the_pawn() {
-        let prev = make_board(
-            [ "RHBQKBHR"
-            , " PPPPPPP"
-            , "        "
-            , "        "
-            , "P       "
-            , "  h  h  "
-            , "pppppppp"
-            , " rbkqb r" ]);
-        let board = *make_move(
-            Player::White,
-            &prev,
-            empty_history(),
-            DEFAULT_LOOKAHEAD
-        ).unwrap().0;
-        println!("{}", diff(&prev, &board, false));
-        assert_eq!(at_pos("A4", &board), Some(Piece(Player::Black, Character::Pawn)));
-    }
-
-    #[test]
-    fn move_the_knight() {
-        let prev = make_board(
-            [ "RHBQKBHR"
-            , "  P PPPP"
-            , " P      "
-            , "P       "
-            , "   P    "
-            , "  h     "
-            , "pppppppp"
-            , "r bkqbhr" ]);
-        let board = *make_move(
-            Player::White,
-            &prev,
-            empty_history(),
-            DEFAULT_LOOKAHEAD
-        ).unwrap().0;
-        println!("{}", rationalise(
-            Player::White,
-            &prev,
-            empty_history(),
-            DEFAULT_LOOKAHEAD));
-        assert_eq!(at_pos("C3", &board), None);
-    }
-
-    #[test]
-    fn check_detection() {
-        let board = make_board(
-            [ "RHB K HR"
-            , "    P  P"
-            , " PP  P B"
-            , "        "
-            , "P  Q  p "
-            , "     p  "
-            , "ppp    q"
-            , "rh k bhr"]);
-        println!("{}", PrettyBoard {
-            board: board,
-            debug:false,
-            moved: None });
-        assert_eq!(true, rate::is_in_check(
-            Player::White,
-            &board,
-            &rate::attack_surface(&board)));
-    }
-
-    #[test]
-    fn attack_queen() {
-        let board = make_board(
-            [ "        "
-            , "        "
-            , "P       "
-            , "P       "
-            , "   P    "
-            , "  P     "
-            , "        "
-            , "q     PP"]);
-        let attacked_by = rate::attack_surface(&board);
-
-        println!("{}", PrettyBoard {
-            board: board,
-            debug:false,
-            moved: None });
-
-        assert_eq!(true, attacked_by.white[to_pos("A5".to_string()).unwrap()]);
-        assert_eq!(false,attacked_by.white[to_pos("A6".to_string()).unwrap()]);
-        assert_eq!(true, attacked_by.white[to_pos("G1".to_string()).unwrap()]);
-        assert_eq!(false,attacked_by.white[to_pos("H1".to_string()).unwrap()]);
-        assert_eq!(true, attacked_by.white[to_pos("C3".to_string()).unwrap()]);
-        assert_eq!(false,attacked_by.white[to_pos("D4".to_string()).unwrap()]);
-    }
+#[test]
+fn empty_score() {
+    assert_eq!(0, rate::piece_weights(&starting_board()));
+}
 }
