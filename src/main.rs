@@ -22,7 +22,7 @@ struct CliOptions {
     print: bool,
 
     /// Print the board at each round
-    #[arg(long, value_name = "N", default_value_t = 100)]
+    #[arg(long, value_name = "N", default_value_t = 500)]
     rounds: usize,
 
     /// Play against the machine
@@ -552,15 +552,10 @@ fn player_moves(player: Player, board: &Board) -> Vec<Arc<Board>> {
                 }
             }
 
-
             let mut b = board.clone();
             b[pos] = None;
             b[*new_pos as usize] = Some(Piece(p, c));
 
-            // skip illegal moves
-            if rate::is_in_check(player, &b) {
-                continue;
-            }
             results.push(Arc::new(b));
         }
     }
@@ -762,7 +757,11 @@ mod rate {
         turn: Player, // player that just played
         board: &Board,
     ) -> Option<Rating> {
-        if !attack_opportunities(turn, board).is_some() { return None }
+        let attacks = attack_surface(board);
+        // skip illegal moves
+        if rate::is_in_check(turn, board, &attacks) {
+            return None;
+        }
         Some(piece_weights(board))
     }
 
@@ -852,8 +851,10 @@ mod rate {
             .is_some()
     }
 
-    pub fn is_in_check(player: Player, board: &Board) -> bool {
-        let attacked_by = attack_surface(board);
+    pub fn is_in_check(
+        player: Player,
+        board: &Board,
+        attacked_by: &AttackSurface) -> bool {
         for (i, piece) in board.iter().enumerate() {
             match (player, piece) {
                 (Player::White, Some(Piece(Player::White, Character::King))) =>
@@ -870,35 +871,37 @@ mod rate {
     #[derive(Debug)]
     pub struct AttackSurface {
         pub white: [bool; 64], // positions attacked by white
-        pub black: [bool; 64]  // positions attacked by black
+        pub black: [bool; 64], // positions attacked by black
+        pub white_count: i64,
+        pub black_count: i64,
     }
 
     pub fn attack_surface(board : &Board) -> AttackSurface {
-        let mut attacked_by_white : [bool; 64] = [false; 64];
-        let mut attacked_by_black : [bool; 64] = [false; 64];
+        let mut attacked_by = AttackSurface {
+            white: [false; 64],
+            black: [false; 64],
+            white_count: 0,
+            black_count: 0
+        };
         for (pos, piece ) in board.iter().enumerate() {
             let (player, moves) = match piece {
                 None => continue,
                 Some(Piece(player, character)) => (*player, piece_moves(*player, *character, pos, board))
             };
             for target in moves.iter() {
-                let Piece(other, _) = match board[*target as usize] {
-                    None => continue,
-                    Some(p) => p,
-                };
-                if other != player {
-                    match player {
-                        Player::White => attacked_by_white[*target as usize] = true,
-                        Player::Black => attacked_by_black[*target as usize] = true
+                match player {
+                    Player::White => {
+                        attacked_by.white_count += 1;
+                        attacked_by.white[*target as usize] = true;
+                    },
+                    Player::Black => {
+                        attacked_by.black_count += 1;
+                        attacked_by.black[*target as usize] = true;
                     }
                 }
             }
         }
-
-        return AttackSurface {
-            white: attacked_by_white,
-            black: attacked_by_black
-        };
+        return attacked_by;
     }
 }
 
@@ -1144,7 +1147,10 @@ mod chess_tests {
             board: board,
             debug:false,
             moved: None });
-        assert_eq!(true, rate::is_in_check(Player::White, &board));
+        assert_eq!(true, rate::is_in_check(
+            Player::White,
+            &board,
+            &rate::attack_surface(&board)));
     }
 
     #[test]
