@@ -46,7 +46,12 @@ fn main() -> () {
     if cli.interactive {
         println!("{}", interactive());
     } else {
-        println!("{}", play(delay, cli.print, cli.rounds, cli.debug, LookAhead(cli.foresight)));
+        println!("{}", play(
+            delay,
+            cli.print,
+            cli.rounds,
+            cli.debug,
+            LookAhead(cli.foresight)));
     }
 }
 
@@ -202,7 +207,7 @@ fn diff(from: &Board, to: &Board, debug: bool) -> PrettyBoard {
 // Playing
 // -----------------
 
-const DEFAULT_LOOKAHEAD : LookAhead = LookAhead(2);
+const DEFAULT_LOOKAHEAD : LookAhead = LookAhead(3);
 
 fn interactive() -> String {
     let mut board = starting_board();
@@ -386,13 +391,6 @@ fn next_player(player: Player) -> Player {
     }
 }
 
-fn best_rating_for(player: Player) -> Rating {
-    match player {
-        Player::White => 1000,
-        Player::Black => -1000,
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 struct LookAhead(u8);
 
@@ -493,7 +491,10 @@ fn make_move_(
     let mut best_board = None;
     for (candidate, rating) in candidates {
         // skip illegal moves
-        if rate::is_in_check(player, board, &rate::attack_surface(board)) {
+        if rate::is_in_check(
+            player,
+            &candidate,
+            &rate::attack_surface(&candidate)) {
             continue;
         }
         best_board = match best_board {
@@ -516,7 +517,10 @@ fn make_move_(
 
 // Pick best moves for a player
 fn prune(player : Player, bs : Vec<Arc<Board>>) -> Vec<Arc<Board>> {
-    return bs;
+    // for now don't do any pruning.
+    // the pruning calculation takes quite a bit of compute.
+    if true { return bs }
+
     let pruned_count = 10;
     let mut best: Vec<(Rating, Arc<Board>)> = bs
         .clone()
@@ -765,7 +769,7 @@ mod rate {
         board: &Board,
     ) -> Option<Rating> {
         let attacks = attack_surface(board);
-        Some(piece_weights(board))
+        Some(4 * piece_weights(board) + attacks.white_count - attacks.black_count)
     }
 
     fn weight(c: Character) -> i64 {
@@ -1164,7 +1168,6 @@ fn dont_give_pawn_away() {
     assert_eq!(at_pos("F4", &board), None);
 }
 
-// TODO
 #[test]
 fn take_the_pawn() {
     let prev = make_board(
@@ -1255,5 +1258,25 @@ fn attack_queen() {
 #[test]
 fn empty_score() {
     assert_eq!(0, rate::piece_weights(&starting_board()));
+}
+
+#[test]
+fn dont_freely_give_bishop_away() {
+    let prev = make_board(
+        [ " H  KBHR"
+        , "R  PPPPP"
+        , " r      "
+        , "  Q     "
+        , "  P     "
+        , "p       "
+        , "pbpppppp"
+        , "  k qbhr" ]);
+    let board = move_with_rationale(
+        Player::White,
+        &prev,
+        empty_history(),
+        DEFAULT_LOOKAHEAD);
+    assert_eq!(at_pos("C3", &board), None);
+    assert_eq!(true, false);
 }
 }
